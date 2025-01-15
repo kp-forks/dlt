@@ -1,17 +1,24 @@
+import atexit
 import time
 import contextlib
 import inspect
 from typing import Any, Callable
 
-from dlt.common.configuration.specs import RunConfiguration
+from dlt.common.configuration.specs import RuntimeConfiguration
+from dlt.common.exceptions import MissingDependencyException
 from dlt.common.typing import TFun
 from dlt.common.configuration import resolve_configuration
-from dlt.common.runtime.segment import TEventCategory, init_segment, disable_segment, track
+from dlt.common.runtime.anon_tracker import (
+    TEventCategory,
+    init_anon_tracker,
+    disable_anon_tracker,
+    track,
+)
 
 _TELEMETRY_STARTED = False
 
 
-def start_telemetry(config: RunConfiguration) -> None:
+def start_telemetry(config: RuntimeConfiguration) -> None:
     # enable telemetry only once
 
     global _TELEMETRY_STARTED
@@ -21,14 +28,23 @@ def start_telemetry(config: RunConfiguration) -> None:
     if config.sentry_dsn:
         # may raise if sentry is not installed
         from dlt.common.runtime.sentry import init_sentry
+
         init_sentry(config)
 
     if config.dlthub_telemetry:
-        init_segment(config)
+        init_anon_tracker(config)
+
+    if config.dlthub_dsn:
+        # TODO: we need pluggable modules for tracing so import into
+        # concrete modules is not needed
+        from dlt.pipeline.platform import init_platform_tracker
+
+        init_platform_tracker()
 
     _TELEMETRY_STARTED = True
 
 
+@atexit.register
 def stop_telemetry() -> None:
     global _TELEMETRY_STARTED
     if not _TELEMETRY_STARTED:
@@ -36,11 +52,16 @@ def stop_telemetry() -> None:
 
     try:
         from dlt.common.runtime.sentry import disable_sentry
+
         disable_sentry()
-    except ImportError:
+    except (MissingDependencyException, ImportError):
         pass
 
-    disable_segment()
+    disable_anon_tracker()
+
+    from dlt.pipeline.platform import disable_platform_tracker
+
+    disable_platform_tracker()
 
     _TELEMETRY_STARTED = False
 
@@ -49,14 +70,18 @@ def is_telemetry_started() -> bool:
     return _TELEMETRY_STARTED
 
 
-def with_telemetry(category: TEventCategory, command: str, track_before: bool, *args: str) -> Callable[[TFun], TFun]:
+def with_telemetry(
+    category: TEventCategory, command: str, track_before: bool, *args: str
+) -> Callable[[TFun], TFun]:
     """Adds telemetry to f: TFun and add optional f *args values to `properties` of telemetry event"""
+
     def decorator(f: TFun) -> TFun:
         sig: inspect.Signature = inspect.signature(f)
+
         def _wrap(*f_args: Any, **f_kwargs: Any) -> Any:
             # look for additional arguments
             bound_args = sig.bind(*f_args, **f_kwargs)
-            props = {p:bound_args.arguments[p] for p in args if p in bound_args.arguments}
+            props = {p: bound_args.arguments[p] for p in args if p in bound_args.arguments}
             start_ts = time.time()
 
             def _track(success: bool) -> None:
@@ -65,7 +90,7 @@ def with_telemetry(category: TEventCategory, command: str, track_before: bool, *
                     props["success"] = success
                     # resolve runtime config and init telemetry
                     if not _TELEMETRY_STARTED:
-                        c = resolve_configuration(RunConfiguration())
+                        c = resolve_configuration(RuntimeConfiguration())
                         start_telemetry(c)
                     track(category, command, props)
 
@@ -88,4 +113,5 @@ def with_telemetry(category: TEventCategory, command: str, track_before: bool, *
                 raise
 
         return _wrap  # type: ignore
+
     return decorator

@@ -1,7 +1,7 @@
 import os
 import asyncio
 import inspect
-from typing import List, Sequence
+from typing import ClassVar, List, Sequence
 import time
 
 import pytest
@@ -9,48 +9,68 @@ import pytest
 import dlt
 from dlt.common import sleep
 from dlt.common.typing import TDataItems
-from dlt.extract.exceptions import CreatePipeException, ResourceExtractionError
-from dlt.extract.typing import DataItemWithMeta, FilterItem, MapItem, YieldMapItem
-from dlt.extract.pipe import ManagedPipeIterator, Pipe, PipeItem, PipeIterator
+from dlt.extract.exceptions import CreatePipeException, ResourceExtractionError, UnclosablePipe
+from dlt.extract.items import DataItemWithMeta
+from dlt.extract.items_transform import FilterItem, MapItem, YieldMapItem
+from dlt.extract.pipe import Pipe
+from dlt.extract.pipe_iterator import PipeIterator, ManagedPipeIterator, PipeItem
 
 
 def test_next_item_mode() -> None:
-
     def nested_gen_level_2():
-        yield from [88, None, 89]
+        yield from [6, None, 7]
 
     def nested_gen():
-        yield from [55, 56, None, 77, nested_gen_level_2()]
+        yield from [3, 4, None, 5, nested_gen_level_2(), 8, 9]
 
     def source_gen1():
-        yield from [1, 2, nested_gen(), 3,4]
+        yield from [1, 2, nested_gen(), 10, 11]
 
     def source_gen2():
-        yield from range(11, 16)
+        yield from [12, 13]
 
     def source_gen3():
-        yield from range(20,22)
+        yield from [14, 15]
 
     def get_pipes():
         return [
             Pipe.from_data("data1", source_gen1()),
             Pipe.from_data("data2", source_gen2()),
             Pipe.from_data("data3", source_gen3()),
-            ]
+        ]
 
-    # default mode is "fifo"
+    # test both modes
     _l = list(PipeIterator.from_pipes(get_pipes(), next_item_mode="fifo"))
-    # items will be in order of the pipes, nested iterator items appear inline
-    assert [pi.item for pi in _l] ==  [1, 2, 55, 56, 77, 88, 89,  3, 4, 11, 12, 13, 14, 15, 20, 21]
+    # items will be in order of the pipes, nested iterator items appear inline, None triggers a bit of rotation
+    assert [pi.item for pi in _l] == [1, 2, 3, 4, 10, 5, 6, 8, 7, 9, 11, 12, 13, 14, 15]
 
-    # round robin mode
+    # force fifo, no rotation at all when crossing the initial source count
+    _l = list(PipeIterator.from_pipes(get_pipes(), next_item_mode="fifo", max_parallel_items=1))
+    # order the same as above - same rules apply
+    assert [pi.item for pi in _l] == [1, 2, 3, 4, 10, 5, 6, 8, 7, 9, 11, 12, 13, 14, 15]
+
+    # round robin eval
     _l = list(PipeIterator.from_pipes(get_pipes(), next_item_mode="round_robin"))
-    # items will be round robin, nested iterators are fully iterated and appear inline as soon as they are encountered
-    assert [pi.item for pi in _l] == [1, 11, 20, 2, 12, 21, 55, 56, 77, 88, 89, 13, 3, 14, 4, 15]
+    # items will be in order of the pipes, nested iterator items appear inline, None triggers rotation
+    assert [pi.item for pi in _l] == [1, 12, 14, 2, 13, 15, 3, 10, 4, 11, 5, 6, 8, 9, 7]
+
+    # default is round robin, should have same result without explicit
+    _l = list(PipeIterator.from_pipes(get_pipes()))
+    # items will be in order of the pipes, nested iterator items appear inline, None triggers rotation
+    assert [pi.item for pi in _l] == [1, 12, 14, 2, 13, 15, 3, 10, 4, 11, 5, 6, 8, 9, 7]
+
+    # round robin with max parallel items triggers strict fifo in some cases (after gen2 and 3 are exhausted we already have the first yielded gen,
+    # items appear in order as sources are processed strictly from front)
+    _l = list(
+        PipeIterator.from_pipes(get_pipes(), next_item_mode="round_robin", max_parallel_items=1)
+    )
+    # items will be in order of the pipes, nested iterator items appear inline, None triggers rotation
+    # NOTE: 4, 10, 5 - after 4 there's NONE in fifo so we do next element (round robin style)
+    # NOTE: 6, 8, 7 - after 6 there's NONE - same thing
+    assert [pi.item for pi in _l] == [1, 12, 14, 2, 13, 15, 3, 4, 10, 5, 6, 8, 7, 9, 11]
 
 
 def test_rotation_on_none() -> None:
-
     global gen_1_started
     global gen_2_started
     global gen_3_started
@@ -59,7 +79,7 @@ def test_rotation_on_none() -> None:
     def source_gen1():
         gen_1_started = time.time()
         yield None
-        while time.time() - gen_1_started < 0.6:
+        while time.time() - gen_1_started < 3:
             time.sleep(0.05)
             yield None
         yield 1
@@ -67,7 +87,7 @@ def test_rotation_on_none() -> None:
     def source_gen2():
         gen_2_started = time.time()
         yield None
-        while time.time() - gen_2_started < 0.2:
+        while time.time() - gen_2_started < 1:
             time.sleep(0.05)
             yield None
         yield 2
@@ -75,7 +95,7 @@ def test_rotation_on_none() -> None:
     def source_gen3():
         gen_3_started = time.time()
         yield None
-        while time.time() - gen_3_started < 0.4:
+        while time.time() - gen_3_started < 2:
             time.sleep(0.05)
             yield None
         yield 3
@@ -85,18 +105,14 @@ def test_rotation_on_none() -> None:
             Pipe.from_data("data1", source_gen1()),
             Pipe.from_data("data2", source_gen2()),
             Pipe.from_data("data3", source_gen3()),
-            ]
+        ]
 
     # round robin mode
     _l = list(PipeIterator.from_pipes(get_pipes(), next_item_mode="round_robin"))
     # items will be round robin, nested iterators are fully iterated and appear inline as soon as they are encountered
     assert [pi.item for pi in _l] == [2, 3, 1]
     # jobs should have been executed in parallel
-    assert time.time() - started < 0.8
-
-
-
-
+    assert time.time() - started < 3.5
 
 
 def test_add_step() -> None:
@@ -140,7 +156,7 @@ def test_insert_remove_step() -> None:
     pp = Pipe.from_data("data", data)
 
     def tx(item):
-        yield item*2
+        yield item * 2
 
     # create pipe with transformer
     p = Pipe.from_data("tx", tx, parent=pp)
@@ -192,7 +208,7 @@ def test_insert_remove_step() -> None:
     p.remove_step(0)
     assert p._gen_idx == 0
     _l = list(PipeIterator.from_pipe(p))
-    assert [pi.item for pi in _l] == [0.5, 1, 3/2]
+    assert [pi.item for pi in _l] == [0.5, 1, 3 / 2]
     # remove all remaining txs
     p.remove_step(1)
     pp.remove_step(1)
@@ -214,11 +230,61 @@ def test_insert_remove_step() -> None:
 
     def tx_minus(item, meta):
         assert meta is None
-        yield item*-4
+        yield item * -4
 
     p.replace_gen(tx_minus)
     _l = list(PipeIterator.from_pipe(p))
     assert [pi.item for pi in _l] == [4, 8, 12]
+
+
+def test_append_transform_with_placement_affinity() -> None:
+    class FilterItemStart(FilterItem):
+        placement_affinity: ClassVar[float] = -1
+
+    class FilterItemEnd(FilterItem):
+        placement_affinity: ClassVar[float] = 1
+
+    assert FilterItemStart(lambda _: True).placement_affinity == -1
+    assert FilterItemEnd(lambda _: True).placement_affinity == 1
+
+    data = [1, 2, 3]
+    # data_iter = iter(data)
+    pp = Pipe.from_data("data", data)
+
+    pp.append_step(FilterItemEnd(lambda _: True))
+    pp.append_step(FilterItemStart(lambda _: True))
+    assert len(pp) == 3
+    # gen must always be first
+    assert pp._steps[0] == data
+    assert isinstance(pp._steps[1], FilterItemStart)
+    assert isinstance(pp._steps[2], FilterItemEnd)
+
+    def regular_lambda(item):
+        return True
+
+    pp.append_step(regular_lambda)
+    assert pp._steps[-2].__name__ == "regular_lambda"  # type: ignore[union-attr]
+
+    # explicit insert works as before, ignores affinity
+    end_aff_2 = FilterItemEnd(lambda _: True)
+    start_aff_2 = FilterItemStart(lambda _: True)
+    pp.insert_step(end_aff_2, 1)
+    assert pp._steps[1] is end_aff_2
+    pp.insert_step(start_aff_2, len(pp))
+    assert pp._steps[-1] is start_aff_2
+
+    def tx(item):
+        yield item * 2
+
+    # create pipe with transformer
+    p = Pipe.from_data("tx", tx, parent=pp)
+    p.append_step(FilterItemEnd(lambda _: True))
+    p.append_step(FilterItemStart(lambda _: True))
+    assert len(p) == 3
+    # note that in case of start affinity, tranform gets BEFORE transformer
+    assert isinstance(p._steps[0], FilterItemStart)
+    assert p._steps[1].__name__ == "tx"  # type: ignore[union-attr]
+    assert isinstance(p._steps[2], FilterItemEnd)
 
 
 def test_pipe_propagate_meta() -> None:
@@ -237,8 +303,8 @@ def test_pipe_propagate_meta() -> None:
     p = Pipe.from_data("data", iter(meta_data))
 
     def item_meta_step(item: int, meta):
-        assert _meta[item-1] == meta
-        return item*2
+        assert _meta[item - 1] == meta
+        return item * 2
 
     p.append_step(item_meta_step)  # type: ignore[arg-type]
     _l = list(PipeIterator.from_pipe(p))
@@ -251,19 +317,19 @@ def test_pipe_propagate_meta() -> None:
 
     # does not take meta
     def transformer(item):
-        yield item*item
+        yield item * item
 
     def item_meta_step_trans(item: int, meta):
         # reverse all transformations on item
-        meta_idx = int(item**0.5//2)
-        assert _meta[meta_idx-1] == meta
-        return item*2
+        meta_idx = int(item**0.5 // 2)
+        assert _meta[meta_idx - 1] == meta
+        return item * 2
 
     t = Pipe("tran", [transformer], parent=p)
     t.append_step(item_meta_step_trans)  # type: ignore[arg-type]
     _l = list(PipeIterator.from_pipe(t))
     # item got propagated through transformation -> transformer -> transformation
-    assert [int((pi.item//2)**0.5//2) for pi in _l] == data  # type: ignore[operator]
+    assert [int((pi.item // 2) ** 0.5 // 2) for pi in _l] == data  # type: ignore[operator]
     assert [pi.meta for pi in _l] == _meta
 
     # same but with the fork step
@@ -274,7 +340,7 @@ def test_pipe_propagate_meta() -> None:
     # do not yield parents
     _l = list(PipeIterator.from_pipes([p, t], yield_parents=False))
     # same result
-    assert [int((pi.item//2)**0.5//2) for pi in _l] == data  # type: ignore[operator]
+    assert [int((pi.item // 2) ** 0.5 // 2) for pi in _l] == data  # type: ignore[operator]
     assert [pi.meta for pi in _l] == _meta
 
     # same but yield parents
@@ -284,12 +350,12 @@ def test_pipe_propagate_meta() -> None:
     t.append_step(item_meta_step_trans)  # type: ignore[arg-type]
     _l = list(PipeIterator.from_pipes([p, t], yield_parents=True))
     # same result for transformer
-    tran_l = [pi for pi in _l if pi.pipe._pipe_id == t._pipe_id]
-    assert [int((pi.item//2)**0.5//2) for pi in tran_l] == data  # type: ignore[operator]
+    tran_l = [pi for pi in _l if pi.pipe.name == t.name]
+    assert [int((pi.item // 2) ** 0.5 // 2) for pi in tran_l] == data  # type: ignore[operator]
     assert [pi.meta for pi in tran_l] == _meta
-    data_l = [pi for pi in _l if pi.pipe._pipe_id == p._pipe_id]
+    data_l = [pi for pi in _l if pi.pipe.name is p.name]
     # data pipe went only through one transformation
-    assert [int(pi.item//2) for pi in data_l] == data  # type: ignore[operator]
+    assert [int(pi.item // 2) for pi in data_l] == data  # type: ignore[operator]
     assert [pi.meta for pi in data_l] == _meta
 
 
@@ -301,9 +367,9 @@ def test_pipe_transformation_changes_meta() -> None:
     p = Pipe.from_data("data", iter(meta_data))
 
     def item_meta_step(item: int, meta):
-        assert _meta[item-1] == meta
+        assert _meta[item - 1] == meta
         # return meta, it should overwrite existing one
-        return DataItemWithMeta("X" + str(item), item*2)
+        return DataItemWithMeta("X" + str(item), item * 2)
 
     p.append_step(item_meta_step)  # type: ignore[arg-type]
     _l = list(PipeIterator.from_pipe(p))
@@ -313,10 +379,10 @@ def test_pipe_transformation_changes_meta() -> None:
     # also works for deferred transformations
     @dlt.defer
     def item_meta_step_defer(item: int, meta):
-        assert _meta[item-1] == meta
+        assert _meta[item - 1] == meta
         sleep(item * 0.2)
         # return meta, it should overwrite existing one
-        return DataItemWithMeta("X" + str(item), item*2)
+        return DataItemWithMeta("X" + str(item), item * 2)
 
     p = Pipe.from_data("data", iter(meta_data))
     p.append_step(item_meta_step_defer)  # type: ignore[arg-type]
@@ -326,9 +392,9 @@ def test_pipe_transformation_changes_meta() -> None:
 
     # also works for yielding transformations
     def item_meta_step_flat(item: int, meta):
-        assert _meta[item-1] == meta
+        assert _meta[item - 1] == meta
         # return meta, it should overwrite existing one
-        yield DataItemWithMeta("X" + str(item), item*2)
+        yield DataItemWithMeta("X" + str(item), item * 2)
 
     p = Pipe.from_data("data", iter(meta_data))
     p.append_step(item_meta_step_flat)  # type: ignore[arg-type]
@@ -338,10 +404,10 @@ def test_pipe_transformation_changes_meta() -> None:
 
     # also works for async
     async def item_meta_step_async(item: int, meta):
-        assert _meta[item-1] == meta
+        assert _meta[item - 1] == meta
         await asyncio.sleep(item * 0.2)
         # this returns awaitable
-        return DataItemWithMeta("X" + str(item), item*2)
+        return DataItemWithMeta("X" + str(item), item * 2)
 
     p = Pipe.from_data("data", iter(meta_data))
     p.append_step(item_meta_step_async)  # type: ignore[arg-type]
@@ -352,7 +418,7 @@ def test_pipe_transformation_changes_meta() -> None:
     # also lets the transformer return meta
 
     def transformer(item: int):
-        yield DataItemWithMeta("X" + str(item), item*2)
+        yield DataItemWithMeta("X" + str(item), item * 2)
 
     p = Pipe.from_data("data", iter(meta_data))
     t = Pipe("tran", [transformer], parent=p)  # type: ignore[list-item] # TODO: typealias not working?
@@ -450,14 +516,30 @@ def test_yield_map_step() -> None:
     p = Pipe.from_data("data", [1, 2, 3])
     # this creates number of rows as passed by the data
     p.append_step(YieldMapItem(lambda item: (yield from [f"item_{x}" for x in range(item)])))
-    assert _f_items(list(PipeIterator.from_pipe(p))) == ["item_0", "item_0", "item_1", "item_0", "item_1", "item_2"]
+    assert _f_items(list(PipeIterator.from_pipe(p, next_item_mode="fifo"))) == [
+        "item_0",
+        "item_0",
+        "item_1",
+        "item_0",
+        "item_1",
+        "item_2",
+    ]
     data = [1, 2, 3]
     meta = ["A", "B", "C"]
     # package items into meta wrapper
     meta_data = [DataItemWithMeta(m, d) for m, d in zip(meta, data)]
     p = Pipe.from_data("data", meta_data)
-    p.append_step(YieldMapItem(lambda item, meta: (yield from [f"item_{meta}_{x}" for x in range(item)])))
-    assert _f_items(list(PipeIterator.from_pipe(p))) == ["item_A_0", "item_B_0", "item_B_1", "item_C_0", "item_C_1", "item_C_2"]
+    p.append_step(
+        YieldMapItem(lambda item, meta: (yield from [f"item_{meta}_{x}" for x in range(item)]))
+    )
+    assert _f_items(list(PipeIterator.from_pipe(p, next_item_mode="fifo"))) == [
+        "item_A_0",
+        "item_B_0",
+        "item_B_1",
+        "item_C_0",
+        "item_C_1",
+        "item_C_2",
+    ]
 
 
 def test_pipe_copy_on_fork() -> None:
@@ -479,10 +561,63 @@ def test_pipe_copy_on_fork() -> None:
     assert elems[0].item is not elems[1].item
 
 
-def test_clone_pipes() -> None:
+def test_pipe_pass_empty_list() -> None:
+    def _gen():
+        yield []
 
+    pipe = Pipe.from_data("data", _gen())
+    elems = list(PipeIterator.from_pipe(pipe))
+    assert elems[0].item == []
+
+    pipe = Pipe.from_data("data", [[]])
+    elems = list(PipeIterator.from_pipe(pipe))
+    assert elems[0].item == []
+
+
+def test_clone_single_pipe() -> None:
+    doc = {"e": 1, "l": 2}
+    parent = Pipe.from_data("data", [doc])
+
+    # default clone
+    cloned_p = parent._clone()
+    assert cloned_p.name == parent.name
+    assert cloned_p != parent
+    assert id(cloned_p.steps) != id(parent.steps)
+    assert cloned_p.gen == parent.gen
+    cloned_p = parent._clone(with_parent=True)
+    assert cloned_p != parent
+    # with rename
+    cloned_p = parent._clone(new_name="new_name")
+    assert cloned_p.name == "new_name"
+    assert id(cloned_p.steps) != id(parent.steps)
+
+    # add child
+    child1 = Pipe("tr1", [lambda x: x], parent=parent)
+    child2 = Pipe("tr2", [lambda x: x], parent=child1)
+
+    # clone child without parent
+    cloned_ch2 = child2._clone()
+    assert cloned_ch2.parent == child1
+    cloned_ch2 = child2._clone(new_name="new_child_2")
+    assert cloned_ch2.name == "new_child_2"
+    assert cloned_ch2.parent == child1
+    assert cloned_ch2.parent.name == child1.name
+
+    # clone child with parent
+    cloned_ch2 = child2._clone(with_parent=True, new_name="new_child_2")
+    assert cloned_ch2.parent != child1
+    assert cloned_ch2.parent.name == "tr1_new_child_2"
+    assert cloned_ch2.parent.parent != parent
+    assert cloned_ch2.parent.parent.name == "data_tr1_new_child_2"
+    # rename again
+    cloned_ch2_2 = cloned_ch2._clone(with_parent=True, new_name="a_new_name")
+    assert cloned_ch2_2.parent.name == "tr1_a_new_name"
+    assert cloned_ch2_2.parent.parent.name == "data_tr1_a_new_name"
+
+
+def test_clone_pipes() -> None:
     def pass_gen(item, meta):
-        yield item*2
+        yield item * 2
 
     data = [1, 2, 3]
     p1 = Pipe("p1", [data])
@@ -494,28 +629,24 @@ def test_clone_pipes() -> None:
 
     # pass all pipes explicitly
     pipes = [p1, p2, p1_p3, p1_p4, p2_p5, p5_p6]
-    cloned_pipes = PipeIterator.clone_pipes(pipes)
+    cloned_pipes, _ = PipeIterator.clone_pipes(pipes)
     assert_cloned_pipes(pipes, cloned_pipes)
 
     # clone only two top end pipes, still all parents must be cloned as well
     pipes = [p1_p4, p5_p6]
-    cloned_pipes = PipeIterator.clone_pipes(pipes)
+    cloned_pipes, _ = PipeIterator.clone_pipes(pipes)
     assert_cloned_pipes(pipes, cloned_pipes)
     c_p5_p6 = cloned_pipes[-1]
     assert c_p5_p6.parent.parent is not p2
-    assert c_p5_p6.parent.parent._pipe_id == p2._pipe_id
-
-    # try circular deps
+    assert c_p5_p6.parent.parent.name == p2.name
 
 
-
-def assert_cloned_pipes(pipes: List[Pipe], cloned_pipes: List[Pipe]):
+def assert_cloned_pipes(pipes: List[Pipe], cloned_pipes: List[Pipe]) -> None:
     # clones pipes must be separate instances but must preserve pipe id and names
     for pipe, cloned_pipe in zip(pipes, cloned_pipes):
         while True:
             assert pipe is not cloned_pipe
             assert pipe.name == cloned_pipe.name
-            assert pipe._pipe_id == cloned_pipe._pipe_id
             assert pipe.has_parent == cloned_pipe.has_parent
 
             # check all the parents
@@ -526,13 +657,14 @@ def assert_cloned_pipes(pipes: List[Pipe], cloned_pipes: List[Pipe]):
 
     # must yield same data
     for pipe, cloned_pipe in zip(pipes, cloned_pipes):
-        assert _f_items(list(PipeIterator.from_pipe(pipe))) == _f_items(list(PipeIterator.from_pipe(cloned_pipe)))
+        assert _f_items(list(PipeIterator.from_pipe(pipe))) == _f_items(
+            list(PipeIterator.from_pipe(cloned_pipe))
+        )
 
 
 def test_circular_deps() -> None:
-
     def pass_gen(item, meta):
-        yield item*2
+        yield item * 2
 
     c_p1_p3 = Pipe("c_p1_p3", [pass_gen])
     c_p1_p4 = Pipe("c_p1_p4", [pass_gen], parent=c_p1_p3)
@@ -540,7 +672,7 @@ def test_circular_deps() -> None:
     pipes = [c_p1_p3, c_p1_p4]
 
     # can be cloned
-    cloned_pipes = PipeIterator.clone_pipes(pipes)
+    cloned_pipes, _ = PipeIterator.clone_pipes(pipes)
 
     # cannot be evaluated
     with pytest.raises(RecursionError):
@@ -551,11 +683,30 @@ def test_circular_deps() -> None:
         _f_items(list(PipeIterator.from_pipes(pipes)))
 
 
+def test_explicit_close_pipe() -> None:
+    list_pipe = Pipe.from_data("list_pipe", iter([1, 2, 3]))
+    with pytest.raises(UnclosablePipe):
+        list_pipe.close()
+
+    # generator function cannot be closed
+    genfun_pipe = Pipe.from_data("genfun_pipe", lambda _: (yield from [1, 2, 3]))
+    with pytest.raises(UnclosablePipe):
+        genfun_pipe.close()
+
+    gen_pipe = Pipe.from_data("gen_pipe", (lambda: (yield from [1, 2, 3]))())
+    gen_pipe.close()
+    assert inspect.getgeneratorstate(gen_pipe.gen) == "GEN_CLOSED"  # type: ignore[arg-type]
+
+
 close_pipe_got_exit = False
 close_pipe_yielding = False
 
 
 def test_close_on_async_exception() -> None:
+    global close_pipe_got_exit, close_pipe_yielding
+    close_pipe_got_exit = False
+    close_pipe_yielding = False
+
     def long_gen():
         global close_pipe_got_exit, close_pipe_yielding
 
@@ -581,6 +732,10 @@ def test_close_on_async_exception() -> None:
 
 
 def test_close_on_thread_pool_exception() -> None:
+    global close_pipe_got_exit, close_pipe_yielding
+    close_pipe_got_exit = False
+    close_pipe_yielding = False
+
     def long_gen():
         global close_pipe_got_exit, close_pipe_yielding
 
@@ -608,6 +763,9 @@ def test_close_on_thread_pool_exception() -> None:
 
 
 def test_close_on_sync_exception() -> None:
+    global close_pipe_got_exit, close_pipe_yielding
+    close_pipe_got_exit = False
+    close_pipe_yielding = False
 
     def long_gen():
         global close_pipe_got_exit, close_pipe_yielding
@@ -628,6 +786,35 @@ def test_close_on_sync_exception() -> None:
     assert_pipes_closed(raise_gen, long_gen)
 
 
+def test_close_on_async_generator() -> None:
+    global close_pipe_got_exit, close_pipe_yielding
+    close_pipe_got_exit = False
+    close_pipe_yielding = False
+
+    async def long_gen():
+        global close_pipe_got_exit, close_pipe_yielding
+
+        # will be closed by PipeIterator
+        try:
+            close_pipe_yielding = True
+            for i in range(0, 10000):
+                await asyncio.sleep(0.01)
+                yield i
+            close_pipe_yielding = False
+        except GeneratorExit:
+            close_pipe_got_exit = True
+        except asyncio.CancelledError:
+            close_pipe_got_exit = True
+
+    # execute in a thread
+    async def raise_gen(item: int):
+        if item == 10:
+            raise RuntimeError("we fail async")
+        return item
+
+    assert_pipes_closed(raise_gen, long_gen)
+
+
 def assert_pipes_closed(raise_gen, long_gen) -> None:
     global close_pipe_got_exit, close_pipe_yielding
 
@@ -635,7 +822,9 @@ def assert_pipes_closed(raise_gen, long_gen) -> None:
     close_pipe_yielding = False
 
     pit: PipeIterator = None
-    with PipeIterator.from_pipe(Pipe.from_data("failing", raise_gen, parent=Pipe.from_data("endless", long_gen()))) as pit:
+    with PipeIterator.from_pipe(
+        Pipe.from_data("failing", raise_gen, parent=Pipe.from_data("endless", long_gen()))
+    ) as pit:
         with pytest.raises(ResourceExtractionError) as py_ex:
             list(pit)
         assert isinstance(py_ex.value.__cause__, RuntimeError)
@@ -647,7 +836,9 @@ def assert_pipes_closed(raise_gen, long_gen) -> None:
 
     close_pipe_got_exit = False
     close_pipe_yielding = False
-    pit = ManagedPipeIterator.from_pipe(Pipe.from_data("failing", raise_gen, parent=Pipe.from_data("endless", long_gen())))
+    pit = ManagedPipeIterator.from_pipe(
+        Pipe.from_data("failing", raise_gen, parent=Pipe.from_data("endless", long_gen()))
+    )
     with pytest.raises(ResourceExtractionError) as py_ex:
         list(pit)
     assert isinstance(py_ex.value.__cause__, RuntimeError)
