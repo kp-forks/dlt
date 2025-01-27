@@ -4,18 +4,25 @@ from typing import Any, Dict
 from datetime import date, datetime, time  # noqa: I251
 
 from dlt.common.json import json
+from dlt.common.pendulum import pendulum
+from dlt.common.time import reduce_pendulum_datetime_precision
 
 # use regex to escape characters in single pass
 SQL_ESCAPE_DICT = {"'": "''", "\\": "\\\\", "\n": "\\n", "\r": "\\r"}
 
+
 def _make_sql_escape_re(escape_dict: Dict[str, str]) -> re.Pattern:  # type: ignore[type-arg]
-    return re.compile("|".join([re.escape(k) for k in sorted(escape_dict, key=len, reverse=True)]), flags=re.DOTALL)
+    return re.compile(
+        "|".join([re.escape(k) for k in sorted(escape_dict, key=len, reverse=True)]),
+        flags=re.DOTALL,
+    )
 
 
 SQL_ESCAPE_RE = _make_sql_escape_re(SQL_ESCAPE_DICT)
 
+
 def _escape_extended(
-        v: str, prefix:str = "E'", escape_dict: Dict[str, str] = None, escape_re: re.Pattern = None  # type: ignore[type-arg]
+    v: str, prefix: str = "E'", escape_dict: Dict[str, str] = None, escape_re: re.Pattern = None  # type: ignore[type-arg]
 ) -> str:
     escape_dict = escape_dict or SQL_ESCAPE_DICT
     escape_re = escape_re or SQL_ESCAPE_RE
@@ -30,10 +37,12 @@ def escape_redshift_literal(v: Any) -> Any:
         return _escape_extended(v, prefix="'")
     if isinstance(v, bytes):
         return f"from_hex('{v.hex()}')"
-    if isinstance(v, (datetime, date)):
+    if isinstance(v, (datetime, date, time)):
         return f"'{v.isoformat()}'"
     if isinstance(v, (list, dict)):
-        return "json_parse(%s)" % _escape_extended(json.dumps(v), prefix='\'')
+        return "json_parse(%s)" % _escape_extended(json.dumps(v), prefix="'")
+    if v is None:
+        return "NULL"
 
     return str(v)
 
@@ -42,12 +51,14 @@ def escape_postgres_literal(v: Any) -> Any:
     if isinstance(v, str):
         # we escape extended string which behave like the redshift string
         return _escape_extended(v)
-    if isinstance(v, (datetime, date)):
+    if isinstance(v, (datetime, date, time)):
         return f"'{v.isoformat()}'"
     if isinstance(v, (list, dict)):
         return _escape_extended(json.dumps(v))
     if isinstance(v, bytes):
         return f"'\\x{v.hex()}'"
+    if v is None:
+        return "NULL"
 
     return str(v)
 
@@ -56,36 +67,68 @@ def escape_duckdb_literal(v: Any) -> Any:
     if isinstance(v, str):
         # we escape extended string which behave like the redshift string
         return _escape_extended(v)
-    if isinstance(v, (datetime, date)):
+    if isinstance(v, (datetime, date, time)):
         return f"'{v.isoformat()}'"
     if isinstance(v, (list, dict)):
         return _escape_extended(json.dumps(v))
     if isinstance(v, bytes):
         return f"from_base64('{base64.b64encode(v).decode('ascii')}')"
+    if v is None:
+        return "NULL"
+
+    return str(v)
+
+
+def escape_lancedb_literal(v: Any) -> Any:
+    if isinstance(v, str):
+        # we escape extended string which behave like the redshift string
+        return _escape_extended(v, prefix="'")
+    if isinstance(v, (datetime, date, time)):
+        return f"'{v.isoformat()}'"
+    if isinstance(v, (list, dict)):
+        return _escape_extended(json.dumps(v), prefix="'")
+    # TODO: check how binaries are represented in fusion
+    if isinstance(v, bytes):
+        return f"from_base64('{base64.b64encode(v).decode('ascii')}')"
+    if v is None:
+        return "NULL"
 
     return str(v)
 
 
 MS_SQL_ESCAPE_DICT = {
     "'": "''",
-    '\n': "' + CHAR(10) + N'",
-    '\r': "' + CHAR(13) + N'",
-    '\t': "' + CHAR(9) + N'",
+    "\n": "' + CHAR(10) + N'",
+    "\r": "' + CHAR(13) + N'",
+    "\t": "' + CHAR(9) + N'",
 }
 MS_SQL_ESCAPE_RE = _make_sql_escape_re(MS_SQL_ESCAPE_DICT)
 
+
 def escape_mssql_literal(v: Any) -> Any:
     if isinstance(v, str):
-         return _escape_extended(v, prefix="N'", escape_dict=MS_SQL_ESCAPE_DICT, escape_re=MS_SQL_ESCAPE_RE)
+        return _escape_extended(
+            v, prefix="N'", escape_dict=MS_SQL_ESCAPE_DICT, escape_re=MS_SQL_ESCAPE_RE
+        )
     if isinstance(v, (datetime, date, time)):
         return f"'{v.isoformat()}'"
     if isinstance(v, (list, dict)):
-        return _escape_extended(json.dumps(v), prefix="N'", escape_dict=MS_SQL_ESCAPE_DICT, escape_re=MS_SQL_ESCAPE_RE)
+        return _escape_extended(
+            json.dumps(v), prefix="N'", escape_dict=MS_SQL_ESCAPE_DICT, escape_re=MS_SQL_ESCAPE_RE
+        )
     if isinstance(v, bytes):
-        base_64_string = base64.b64encode(v).decode('ascii')
-        return f"""CAST('' AS XML).value('xs:base64Binary("{base_64_string}")', 'VARBINARY(MAX)')"""
+        from dlt.destinations.impl.mssql.mssql import VARBINARY_MAX_N
+
+        if len(v) <= VARBINARY_MAX_N:
+            n = str(len(v))
+        else:
+            n = "MAX"
+        return f"CONVERT(VARBINARY({n}), '{v.hex()}', 2)"
+
     if isinstance(v, bool):
         return str(int(v))
+    if v is None:
+        return "NULL"
     return str(v)
 
 
@@ -95,14 +138,106 @@ def escape_redshift_identifier(v: str) -> str:
 
 escape_postgres_identifier = escape_redshift_identifier
 escape_athena_identifier = escape_postgres_identifier
+escape_dremio_identifier = escape_postgres_identifier
 
 
-def escape_bigquery_identifier(v: str) -> str:
+def escape_hive_identifier(v: str) -> str:
     # https://cloud.google.com/bigquery/docs/reference/standard-sql/lexical
-    return "`" + v.replace("\\", "\\\\").replace("`","\\`") + "`"
+    return "`" + v.replace("\\", "\\\\").replace("`", "\\`") + "`"
 
 
 def escape_snowflake_identifier(v: str) -> str:
     # Snowcase uppercase all identifiers unless quoted. Match this here so queries on information schema work without issue
     # See also https://docs.snowflake.com/en/sql-reference/identifiers-syntax#double-quoted-identifiers
-    return escape_postgres_identifier(v.upper())
+    return escape_postgres_identifier(v)
+
+
+escape_databricks_identifier = escape_hive_identifier
+
+
+DATABRICKS_ESCAPE_DICT = {"'": "\\'", "\\": "\\\\", "\n": "\\n", "\r": "\\r"}
+
+
+def escape_databricks_literal(v: Any) -> Any:
+    if isinstance(v, str):
+        return _escape_extended(v, prefix="'", escape_dict=DATABRICKS_ESCAPE_DICT)
+    if isinstance(v, (datetime, date, time)):
+        return f"'{v.isoformat()}'"
+    if isinstance(v, (list, dict)):
+        return _escape_extended(json.dumps(v), prefix="'", escape_dict=DATABRICKS_ESCAPE_DICT)
+    if isinstance(v, bytes):
+        return f"X'{v.hex()}'"
+    return "NULL" if v is None else str(v)
+
+
+# https://github.com/ClickHouse/ClickHouse/blob/master/docs/en/sql-reference/syntax.md#string
+CLICKHOUSE_ESCAPE_DICT = {
+    "'": "''",
+    "\\": "\\\\",
+    "\n": "\\n",
+    "\t": "\\t",
+    "\b": "\\b",
+    "\f": "\\f",
+    "\r": "\\r",
+    "\0": "\\0",
+    "\a": "\\a",
+    "\v": "\\v",
+}
+
+CLICKHOUSE_ESCAPE_RE = _make_sql_escape_re(CLICKHOUSE_ESCAPE_DICT)
+
+
+def escape_clickhouse_literal(v: Any) -> Any:
+    if isinstance(v, str):
+        return _escape_extended(
+            v, prefix="'", escape_dict=CLICKHOUSE_ESCAPE_DICT, escape_re=CLICKHOUSE_ESCAPE_RE
+        )
+    if isinstance(v, (datetime, date, time)):
+        return f"'{v.isoformat()}'"
+    if isinstance(v, (list, dict)):
+        return _escape_extended(
+            json.dumps(v),
+            prefix="'",
+            escape_dict=CLICKHOUSE_ESCAPE_DICT,
+            escape_re=CLICKHOUSE_ESCAPE_RE,
+        )
+    if isinstance(v, bytes):
+        return f"'{v.hex()}'"
+    return "NULL" if v is None else str(v)
+
+
+def escape_clickhouse_identifier(v: str) -> str:
+    return "`" + v.replace("`", "``").replace("\\", "\\\\") + "`"
+
+
+def format_datetime_literal(v: pendulum.DateTime, precision: int = 6, no_tz: bool = False) -> str:
+    """Converts `v` to ISO string, optionally without timezone spec (in UTC) and with given `precision`"""
+    if no_tz:
+        v = v.in_timezone(tz="UTC").replace(tzinfo=None)
+    v = reduce_pendulum_datetime_precision(v, precision)
+    # yet another precision translation
+    timespec: str = "microseconds"
+    if precision < 6:
+        timespec = "milliseconds"
+    elif precision < 3:
+        timespec = "seconds"
+    return "'" + v.isoformat(sep=" ", timespec=timespec) + "'"
+
+
+def format_bigquery_datetime_literal(
+    v: pendulum.DateTime, precision: int = 6, no_tz: bool = False
+) -> str:
+    """Returns BigQuery-adjusted datetime literal by prefixing required `TIMESTAMP` indicator.
+
+    Also works for Presto-based engines.
+    """
+    # https://cloud.google.com/bigquery/docs/reference/standard-sql/lexical#timestamp_literals
+    return "TIMESTAMP " + format_datetime_literal(v, precision, no_tz)
+
+
+def format_clickhouse_datetime_literal(
+    v: pendulum.DateTime, precision: int = 6, no_tz: bool = False
+) -> str:
+    """Returns clickhouse compatibel function"""
+    datetime = format_datetime_literal(v, precision, True)
+    return f"toDateTime64({datetime}, {precision}, '{v.tzinfo}')"

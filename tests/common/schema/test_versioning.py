@@ -21,6 +21,9 @@ def test_content_hash() -> None:
     assert utils.generate_version_hash(eth_v4) == hash2
     eth_v4["version_hash"] = "xxxx"
     assert utils.generate_version_hash(eth_v4) == hash2
+    # import schema hash is also excluded
+    eth_v4["imported_version_hash"] = "xxxx"
+    assert utils.generate_version_hash(eth_v4) == hash2
     # changing table order does not impact the hash
     loads_table = eth_v4["tables"].pop("_dlt_loads")
     # insert at the end: _dlt_loads was first originally
@@ -62,31 +65,31 @@ def test_infer_column_bumps_version() -> None:
     schema = Schema("event")
     row = {"floatX": 78172.128, "confidenceX": 1.2, "strX": "STR"}
     _, new_table = schema.coerce_row("event_user", None, row)
-    schema.update_schema(new_table)
+    schema.update_table(new_table)
     # schema version will be recomputed
-    assert schema.version == 2
+    assert schema.version == 1
     assert schema.version_hash is not None
     version_hash = schema.version_hash
 
     # another table
     _, new_table = schema.coerce_row("event_bot", None, row)
-    schema.update_schema(new_table)
-    # version is still 2 (increment of 1)
-    assert schema.version == 2
+    schema.update_table(new_table)
+    # version is still 1 (increment of 1)
+    assert schema.version == 1
     # but the hash changed
     assert schema.version_hash != version_hash
 
     # save
     saved_schema = schema.to_dict()
     assert saved_schema["version_hash"] == schema.version_hash
-    assert saved_schema["version"] == 2
+    assert saved_schema["version"] == 1
 
 
 def test_preserve_version_on_load() -> None:
-    eth_v6: TStoredSchema = load_yml_case("schemas/eth/ethereum_schema_v6")
-    version = eth_v6["version"]
-    version_hash = eth_v6["version_hash"]
-    schema = Schema.from_dict(eth_v6)  # type: ignore[arg-type]
+    eth_v11: TStoredSchema = load_yml_case("schemas/eth/ethereum_schema_v11")
+    version = eth_v11["version"]
+    version_hash = eth_v11["version_hash"]
+    schema = Schema.from_dict(eth_v11)  # type: ignore[arg-type]
     # version should not be bumped
     assert version_hash == schema._stored_version_hash
     assert version_hash == schema.version_hash
@@ -95,8 +98,8 @@ def test_preserve_version_on_load() -> None:
 
 @pytest.mark.parametrize("remove_defaults", [True, False])
 def test_version_preserve_on_reload(remove_defaults: bool) -> None:
-    eth_v6: TStoredSchema = load_yml_case("schemas/eth/ethereum_schema_v6")
-    schema = Schema.from_dict(eth_v6)  # type: ignore[arg-type]
+    eth_v11: TStoredSchema = load_yml_case("schemas/eth/ethereum_schema_v11")
+    schema = Schema.from_dict(eth_v11)  # type: ignore[arg-type]
 
     to_save_dict = schema.to_dict(remove_defaults=remove_defaults)
     assert schema.stored_version == to_save_dict["version"]
@@ -122,3 +125,37 @@ def test_version_preserve_on_reload(remove_defaults: bool) -> None:
     saved_rasa_schema = Schema.from_dict(yaml.safe_load(rasa_yml))
     assert saved_rasa_schema.stored_version == rasa_schema.stored_version
     assert saved_rasa_schema.stored_version_hash == rasa_schema.stored_version_hash
+
+
+def test_create_ancestry() -> None:
+    eth_v9: TStoredSchema = load_yml_case("schemas/eth/ethereum_schema_v9")
+    schema = Schema.from_dict(eth_v9)  # type: ignore[arg-type]
+
+    expected_previous_hashes = [
+        "oHfYGTI2GHOxuzwVz6+yvMilXUvHYhxrxkanC2T6MAI=",
+        "C5An8WClbavalXDdNSqXbdI7Swqh/mTWMcwWKCF//EE=",
+        "yjMtV4Zv0IJlfR5DPMwuXxGg8BRhy7E79L26XAHWEGE=",
+    ]
+    hash_count = len(expected_previous_hashes)
+    assert schema._stored_previous_hashes == expected_previous_hashes
+    version = schema._stored_version
+
+    # modify save and load schema 15 times and check ancestry
+    for i in range(1, 15):
+        # keep expected previous_hashes
+        expected_previous_hashes.insert(0, schema._stored_version_hash)
+
+        # update schema
+        row = {f"float{i}": 78172.128}
+        _, new_table = schema.coerce_row("event_user", None, row)
+        schema.update_table(new_table)
+        schema_dict = schema.to_dict()
+        schema = Schema.from_stored_schema(schema_dict)
+
+        assert schema._stored_previous_hashes == expected_previous_hashes[:10]
+        assert schema._stored_version == version + i
+
+        # we never have more than 10 previous_hashes
+        assert len(schema._stored_previous_hashes) == i + hash_count if i + hash_count <= 10 else 10
+
+    assert len(schema._stored_previous_hashes) == 10

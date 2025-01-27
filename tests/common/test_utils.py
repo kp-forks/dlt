@@ -1,13 +1,33 @@
+from copy import deepcopy
 import itertools
 import inspect
 import binascii
 import pytest
-from typing import Dict
+from typing import Any, Dict
+from dlt.common.exceptions import PipelineException, TerminalValueError
 
 from dlt.common.runners import Venv
-from dlt.common.utils import (graph_find_scc_nodes, flatten_list_of_str_or_dicts, digest128, graph_edges_to_nodes, map_nested_in_place,
-                              reveal_pseudo_secret, obfuscate_pseudo_secret, get_module_name, concat_strings_with_limit, increase_row_count,
-                              merge_row_count, extend_list_deduplicated)
+from dlt.common.utils import (
+    clone_dict_nested,
+    graph_find_scc_nodes,
+    flatten_list_of_str_or_dicts,
+    digest128,
+    graph_edges_to_nodes,
+    group_dict_of_lists,
+    is_typeerror_due_to_wrong_call,
+    map_nested_in_place,
+    reveal_pseudo_secret,
+    obfuscate_pseudo_secret,
+    get_module_name,
+    concat_strings_with_limit,
+    increase_row_count,
+    merge_row_counts,
+    extend_list_deduplicated,
+    get_exception_trace,
+    get_exception_trace_chain,
+    update_dict_nested,
+    removeprefix,
+)
 
 
 def test_flatten_list_of_str_or_dicts() -> None:
@@ -21,30 +41,27 @@ def test_flatten_list_of_str_or_dicts() -> None:
 
 
 def test_digest128_length() -> None:
-    assert len(digest128("hash it")) == 120/6
+    assert len(digest128("hash it")) == 120 / 6
 
 
 def test_map_dicts_in_place() -> None:
-    _d = {
-        "a": "1",
-        "b": ["a", "b", ["a", "b"], {"a": "c"}],
-        "c": {
-            "d": "e",
-            "e": ["a", 2]
-        }
+    _d = {"a": "1", "b": ["a", "b", ["a", "b"], {"a": "c"}], "c": {"d": "e", "e": ["a", 2]}}
+    exp_d = {
+        "a": "11",
+        "b": ["aa", "bb", ["aa", "bb"], {"a": "cc"}],
+        "c": {"d": "ee", "e": ["aa", 4]},
     }
-    exp_d = {'a': '11', 'b': ['aa', 'bb', ['aa', 'bb'], {'a': 'cc'}], 'c': {'d': 'ee', 'e': ['aa', 4]}}
-    assert map_nested_in_place(lambda v: v*2, _d) == exp_d
+    assert map_nested_in_place(lambda v: v * 2, _d) == exp_d
     # in place
     assert _d == exp_d
 
     _l = ["a", "b", ["a", "b"], {"a": "c"}]
     exp_l = ["aa", "bb", ["aa", "bb"], {"a": "cc"}]
-    assert map_nested_in_place(lambda v: v*2, _l) == exp_l
+    assert map_nested_in_place(lambda v: v * 2, _l) == exp_l
     assert _l == exp_l
 
     with pytest.raises(ValueError):
-        map_nested_in_place(lambda v: v*2, "a")
+        map_nested_in_place(lambda v: v * 2, "a")
 
 
 def test_pseudo_obfuscation() -> None:
@@ -79,9 +96,25 @@ def test_concat_strings_with_limit() -> None:
     assert list(concat_strings_with_limit(philosopher, ";\n", 15)) == ["Bertrand Russell"]
 
     # only two strings will be merged (22 chars total)
-    philosophers = ["Bertrand Russell", "Ludwig Wittgenstein", "G.E. Moore", "J.L. Mackie", "Alfred Tarski"]
-    moore_merged = ['Bertrand Russell', 'Ludwig Wittgenstein', 'G.E. Moore J.L. Mackie', 'Alfred Tarski']
-    moore_merged_2 = ['Bertrand Russell', 'Ludwig Wittgenstein', 'G.E. Moore;\nJ.L. Mackie', 'Alfred Tarski']
+    philosophers = [
+        "Bertrand Russell",
+        "Ludwig Wittgenstein",
+        "G.E. Moore",
+        "J.L. Mackie",
+        "Alfred Tarski",
+    ]
+    moore_merged = [
+        "Bertrand Russell",
+        "Ludwig Wittgenstein",
+        "G.E. Moore J.L. Mackie",
+        "Alfred Tarski",
+    ]
+    moore_merged_2 = [
+        "Bertrand Russell",
+        "Ludwig Wittgenstein",
+        "G.E. Moore;\nJ.L. Mackie",
+        "Alfred Tarski",
+    ]
     assert list(concat_strings_with_limit(philosophers, " ", 22)) == moore_merged
     # none will be merged
     assert list(concat_strings_with_limit(philosophers, ";\n", 22)) == philosophers
@@ -94,7 +127,7 @@ def test_concat_strings_with_limit() -> None:
 
 
 def test_find_scc_nodes() -> None:
-    edges = [('A', 'B'), ('B', 'C'), ('D', 'E'), ('F', 'G'), ('G', 'H'), ('I', 'I'), ('J', 'J')]
+    edges = [("A", "B"), ("B", "C"), ("D", "E"), ("F", "G"), ("G", "H"), ("I", "I"), ("J", "J")]
 
     def _comp(s):
         return sorted([tuple(sorted(c)) for c in s])
@@ -113,8 +146,28 @@ def test_find_scc_nodes() -> None:
 
 
 def test_graph_edges_to_nodes() -> None:
-    edges = [('A', 'B'), ('A', 'C'), ('B', 'C'), ('D', 'E'), ('F', 'G'), ('G', 'H'), ('I', 'I'), ('J', 'J')]
-    graph = {"A": {"B", "C"}, "B": {"C"}, "C": set(), "D": {"E"}, "E": set(), "F": {"G"}, "G": {"H"}, "H": set(), "I": set(), "J": set()}
+    edges = [
+        ("A", "B"),
+        ("A", "C"),
+        ("B", "C"),
+        ("D", "E"),
+        ("F", "G"),
+        ("G", "H"),
+        ("I", "I"),
+        ("J", "J"),
+    ]
+    graph = {
+        "A": {"B", "C"},
+        "B": {"C"},
+        "C": set(),
+        "D": {"E"},
+        "E": set(),
+        "F": {"G"},
+        "G": {"H"},
+        "H": set(),
+        "I": set(),
+        "J": set(),
+    }
     g1 = graph_edges_to_nodes(edges)
 
     for perm_edges in itertools.permutations(edges):
@@ -126,7 +179,7 @@ def test_graph_edges_to_nodes() -> None:
     # test a few edge cases
     assert graph_edges_to_nodes([]) == {}
     # ignores double edge
-    assert graph_edges_to_nodes([('A', 'B'), ('A', 'B')]) == {'A': {'B'}, 'B': set()}
+    assert graph_edges_to_nodes([("A", "B"), ("A", "B")]) == {"A": {"B"}, "B": set()}
 
 
 def test_increase_row_counts() -> None:
@@ -135,21 +188,13 @@ def test_increase_row_counts() -> None:
     increase_row_count(counts, "table2", 0)
     increase_row_count(counts, "table3", 10)
 
-    assert counts == {
-        "table1": 1,
-        "table2": 0,
-        "table3": 10
-    }
+    assert counts == {"table1": 1, "table2": 0, "table3": 10}
 
     increase_row_count(counts, "table1", 2)
     increase_row_count(counts, "table2", 3)
     increase_row_count(counts, "table3", 4)
 
-    assert counts == {
-        "table1": 3,
-        "table2": 3,
-        "table3": 14
-    }
+    assert counts == {"table1": 3, "table2": 3, "table3": 14}
 
 
 def test_merge_row_counts() -> None:
@@ -158,30 +203,249 @@ def test_merge_row_counts() -> None:
         "table2": 3,
     }
 
-    merge_row_count(rc1, {
-        "table2": 5,
-        "table3": 20,
-    })
-    assert rc1 == {
-        "table1": 3,
-        "table2": 8,
-        "table3": 20
-    }
-    merge_row_count(rc1, {
-        "table2": 5,
-        "table3": 20,
-        "table4": 2
-    })
-    assert rc1 == {
-        "table1": 3,
-        "table2": 13,
-        "table3": 40,
-        "table4": 2
-    }
+    merge_row_counts(
+        rc1,
+        {
+            "table2": 5,
+            "table3": 20,
+        },
+    )
+    assert rc1 == {"table1": 3, "table2": 8, "table3": 20}
+    merge_row_counts(rc1, {"table2": 5, "table3": 20, "table4": 2})
+    assert rc1 == {"table1": 3, "table2": 13, "table3": 40, "table4": 2}
 
 
 def test_extend_list_deduplicated() -> None:
-    assert extend_list_deduplicated(["one", "two", "three"], ["four", "five", "six"]) == ["one", "two", "three", "four", "five", "six"]
-    assert extend_list_deduplicated(["one", "two", "three", "six"], ["two", "four", "five", "six"]) == ["one", "two", "three", "six", "four", "five"]
-    assert extend_list_deduplicated(["one", "two", "three"], ["one", "two", "three"]) == ["one", "two", "three"]
+    assert extend_list_deduplicated(["one", "two", "three"], ["four", "five", "six"]) == [
+        "one",
+        "two",
+        "three",
+        "four",
+        "five",
+        "six",
+    ]
+    assert extend_list_deduplicated(
+        ["one", "two", "three", "six"], ["two", "four", "five", "six"]
+    ) == ["one", "two", "three", "six", "four", "five"]
+    assert extend_list_deduplicated(["one", "two", "three"], ["one", "two", "three"]) == [
+        "one",
+        "two",
+        "three",
+    ]
     assert extend_list_deduplicated([], ["one", "two", "three"]) == ["one", "two", "three"]
+
+
+def test_exception_traces() -> None:
+    from dlt.common.destination.exceptions import IdentifierTooLongException
+
+    # bare exception without stack trace
+    trace = get_exception_trace(Exception("Message"))
+    assert trace["message"] == "Message"
+    assert trace["exception_type"] == "Exception"
+    assert "stack_trace" not in trace
+    assert trace["is_terminal"] is False
+
+    # dlt exception with traceback
+    try:
+        raise IdentifierTooLongException("postgres", "table", "too_long_table", 8)
+    except Exception as exc:
+        trace = get_exception_trace(exc)
+    assert trace["exception_type"] == "dlt.common.destination.exceptions.IdentifierTooLongException"
+    assert isinstance(trace["stack_trace"], list)
+    assert trace["exception_attrs"] == {
+        "destination_name": "postgres",
+        "identifier_type": "table",
+        "identifier_name": "too_long_table",
+        "max_identifier_length": 8,
+    }
+    assert trace["is_terminal"] is True
+
+    # dlt exception with additional props
+    try:
+        raise PipelineException("test_pipeline", "Message")
+    except Exception as exc:
+        trace = get_exception_trace(exc)
+    assert trace["pipeline_name"] == "test_pipeline"
+
+
+def test_exception_trace_chain() -> None:
+    from dlt.common.destination.exceptions import IdentifierTooLongException
+
+    try:
+        raise TerminalValueError("Val")
+    except Exception:
+        try:
+            raise IdentifierTooLongException("postgres", "table", "too_long_table", 8)
+        except Exception as exc:
+            try:
+                # explicit cause
+                raise PipelineException("test_pipeline", "Message") from exc
+            except Exception as exc:
+                traces = get_exception_trace_chain(exc)
+    # outer exception first
+    assert len(traces) == 3
+    assert traces[0]["exception_type"] == "dlt.common.exceptions.PipelineException"
+    assert (
+        traces[1]["exception_type"]
+        == "dlt.common.destination.exceptions.IdentifierTooLongException"
+    )
+    assert traces[2]["exception_type"] == "dlt.common.exceptions.TerminalValueError"
+
+
+def test_nested_dict_merge() -> None:
+    dict_1 = {"a": 1, "b": 2}
+    dict_2 = {"a": 2, "c": 4}
+
+    assert update_dict_nested(dict(dict_1), dict_2) == {"a": 2, "b": 2, "c": 4}
+    assert update_dict_nested(dict(dict_2), dict_1) == {"a": 1, "b": 2, "c": 4}
+    assert update_dict_nested(dict(dict_1), dict_2, copy_src_dicts=True) == {"a": 2, "b": 2, "c": 4}
+    assert update_dict_nested(dict(dict_2), dict_1, copy_src_dicts=True) == {"a": 1, "b": 2, "c": 4}
+    dict_1_update = update_dict_nested({}, dict_1)
+    assert dict_1_update == dict_1
+    assert dict_1_update is not dict_1
+    dict_1_update = clone_dict_nested(dict_1)
+    assert dict_1_update == dict_1
+    assert dict_1_update is not dict_1
+
+    dict_1_deep = {"a": 3, "b": dict_1}
+    dict_1_deep_clone = update_dict_nested({}, dict_1_deep)
+    assert dict_1_deep_clone == dict_1_deep
+    # reference got copied
+    assert dict_1_deep_clone["b"] is dict_1
+    # update with copy
+    dict_1_deep_clone = clone_dict_nested(dict_1_deep)
+    assert dict_1_deep_clone == dict_1_deep
+    # reference got copied
+    assert dict_1_deep_clone["b"] is not dict_1
+
+    # make sure that that Mappings that are not dicts are atomically copied
+    from dlt.common.configuration.specs import ConnectionStringCredentials
+
+    dsn = ConnectionStringCredentials("postgres://loader:loader@localhost:5432/dlt_data")
+    dict_1_mappings: Dict[str, Any] = {
+        "_tuple": (1, 2),
+        "_config": {"key": "str", "_dsn": dsn, "_dict": dict_1_deep},
+    }
+    # make a clone
+    dict_1_mappings_clone = clone_dict_nested(dict_1_mappings)
+    # values are same
+    assert dict_1_mappings == dict_1_mappings_clone
+    # all objects and mappings are copied as reference
+    assert dict_1_mappings["_tuple"] is dict_1_mappings_clone["_tuple"]
+    assert dict_1_mappings["_config"]["_dsn"] is dict_1_mappings_clone["_config"]["_dsn"]
+    # dicts are copied by value
+    assert dict_1_mappings["_config"] is not dict_1_mappings_clone["_config"]
+    assert dict_1_mappings["_config"]["_dict"] is not dict_1_mappings_clone["_config"]["_dict"]
+    assert (
+        dict_1_mappings["_config"]["_dict"]["b"]
+        is not dict_1_mappings_clone["_config"]["_dict"]["b"]
+    )
+
+    # make a copy using references
+    dict_1_mappings_clone = update_dict_nested({}, dict_1_mappings)
+    assert dict_1_mappings["_config"] is dict_1_mappings_clone["_config"]
+    assert dict_1_mappings["_config"]["_dict"] is dict_1_mappings_clone["_config"]["_dict"]
+    assert (
+        dict_1_mappings["_config"]["_dict"]["b"] is dict_1_mappings_clone["_config"]["_dict"]["b"]
+    )
+
+    # replace a few keys
+    print(dict_1_mappings)
+    # this should be non destructive for the dst
+    deep_clone_dict_1_mappings = deepcopy(dict_1_mappings)
+    mappings_update = update_dict_nested(
+        dict_1_mappings, {"_config": {"_dsn": ConnectionStringCredentials(), "_dict": {"a": "X"}}}
+    )
+    # assert deep_clone_dict_1_mappings == dict_1_mappings
+    # things overwritten
+    assert dict_1_mappings["_config"]["_dsn"] is mappings_update["_config"]["_dsn"]
+    # this one is empty
+    assert mappings_update["_config"]["_dsn"].username is None
+    assert dict_1_mappings["_config"]["_dsn"].username is None
+    assert mappings_update["_config"]["_dict"]["a"] == "X"
+    assert dict_1_mappings["_config"]["_dict"]["a"] == "X"
+
+    # restore original values
+    mappings_update = update_dict_nested(
+        mappings_update, {"_config": {"_dsn": dsn, "_dict": {"a": 3}}}
+    )
+    assert mappings_update == deep_clone_dict_1_mappings
+
+
+def test_group_dict_of_lists_one_element_each_list():
+    input_dict = {"Frege": ["obj1"], "Gödel": ["obj2"], "Wittgenstein": ["obj3"]}
+    result = group_dict_of_lists(input_dict)
+    assert len(result) == 1
+    assert result[0] == {"Frege": "obj1", "Gödel": "obj2", "Wittgenstein": "obj3"}
+
+
+def test_group_dict_of_lists_equal_length_lists():
+    input_dict = {
+        "Frege": ["obj1", "obj2"],
+        "Gödel": ["obj3", "obj4"],
+        "Wittgenstein": ["obj5", "obj6"],
+    }
+    result = group_dict_of_lists(input_dict)
+    assert len(result) == 2
+    assert result[0] == {"Frege": "obj1", "Gödel": "obj3", "Wittgenstein": "obj5"}
+    assert result[1] == {"Frege": "obj2", "Gödel": "obj4", "Wittgenstein": "obj6"}
+
+
+def test_group_dict_of_lists_various_length_lists():
+    input_dict = {
+        "Frege": ["obj1", "obj2", "obj3"],
+        "Gödel": ["obj4", "obj5"],
+        "Wittgenstein": ["obj6"],
+    }
+    result = group_dict_of_lists(input_dict)
+    assert len(result) == 3
+    assert result[0] == {"Frege": "obj1", "Gödel": "obj4", "Wittgenstein": "obj6"}
+    assert result[1] == {"Frege": "obj2", "Gödel": "obj5"}
+    assert result[2] == {"Frege": "obj3"}
+
+    # Check if the sizes of the decomposed dicts are decreasing
+    sizes = [len(d) for d in result]
+    assert sizes == sorted(sizes, reverse=True), "Sizes of decomposed dicts are not decreasing"
+
+
+def function_typeerror_exc(a, b):
+    raise TypeError("wrong type")
+
+
+def test_is_typeerror_due_to_wrong_call() -> None:
+    def _function_test(a, *, b=None):
+        return a, b
+
+    try:
+        _function_test()  # type: ignore[call-arg]
+    except Exception as exc:
+        assert is_typeerror_due_to_wrong_call(exc, _function_test) is True
+
+    try:
+        _function_test("a", "b")  # type: ignore[misc]
+    except Exception as exc:
+        assert is_typeerror_due_to_wrong_call(exc, _function_test) is True
+
+    try:
+        1 / 0
+    except Exception as exc:
+        assert is_typeerror_due_to_wrong_call(exc, _function_test) is False
+
+    try:
+        function_typeerror_exc()  # type: ignore[call-arg]
+    except Exception as exc:
+        assert is_typeerror_due_to_wrong_call(exc, function_typeerror_exc) is True
+
+    try:
+        function_typeerror_exc("a", "b")
+    except Exception as exc:
+        assert str(exc) == "wrong type"
+        assert is_typeerror_due_to_wrong_call(exc, function_typeerror_exc) is False
+
+
+def test_removeprefix() -> None:
+    assert removeprefix("a_data", "a_") == "data"
+    assert removeprefix("a_data", "a_data") == ""
+    assert removeprefix("a_data", "a_data_1") == "a_data"
+    assert removeprefix("", "a_data_1") == ""
+    assert removeprefix("a_data", "") == "a_data"

@@ -1,10 +1,13 @@
-# Google Analytics
+---
+title: Google Analytics
+description: dlt verified source for Google Analytics API
+keywords: [google analytics api, google analytics verified source, google analytics]
+---
+import Header from './_source-info-header.md';
 
-:::info Need help deploying these sources, or figuring out how to run them in your data stack?
+# Google analytics
 
-[Join our Slack community](https://dlthub-community.slack.com/join/shared_invite/zt-1slox199h-HAE7EQoXmstkP_bTqal65g)
-or [book a call](https://calendar.app.google/kiLhuMsWKpZUpfho6) with our support engineer Adrian.
-:::
+<Header/>
 
 [Google Analytics](https://marketingplatform.google.com/about/analytics/#?modal_active=none) is a
 service for web analytics that tracks and provides data regarding user engagement with your website
@@ -12,7 +15,7 @@ or application.
 
 This Google Analytics `dlt` verified source and
 [pipeline example](https://github.com/dlt-hub/verified-sources/blob/master/sources/google_analytics_pipeline.py)
-loads data using “Google Analytics API” to the destination of your choice.
+loads data using the "Google Analytics API" to the destination of your choice.
 
 Sources and resources that can be loaded using this verified source are:
 
@@ -22,32 +25,32 @@ Sources and resources that can be loaded using this verified source are:
 | metrics_table    | Assembles and presents data relevant to the report's metrics  |
 | dimensions_table | Compiles and displays data related to the report's dimensions |
 
-## Setup Guide
+## Setup guide
 
 ### Grab credentials
 
 There are two methods to get authenticated for using this verified source:
 
 - OAuth credentials
-- Service account credential
+- Service account credentials
 
 Let's go over how to set up both OAuth tokens and service account credentials. In general, OAuth
 tokens are preferred when user consent is required, while service account credentials are better
 suited for server-to-server interactions. You can choose the method of authentication as per your
 requirement.
 
-### Grab google service account credentials
+### Grab Google service account credentials
 
-You need to create a GCP service account to get API credentials, if you don't have one. To create
-one follow these steps:
+You need to create a GCP service account to get API credentials if you don't have one. To create
+one, follow these steps:
 
 1. Sign in to [console.cloud.google.com](http://console.cloud.google.com/).
 
-1. [Create a service account](https://cloud.google.com/iam/docs/service-accounts-create#creating) if
+1. [Create a service account](https://cloud.google.com/iam/docs/service-accounts-create#creating) if
    needed.
 
-1. Enable "Google Analytics API", refer
-   [google documentation](https://support.google.com/googleapi/answer/6158841?hl=en) for
+1. Enable the "Google Analytics API". Refer to the
+   [Google documentation](https://support.google.com/googleapi/answer/6158841?hl=en) for
    comprehensive instructions on this process.
 
 1. Generate credentials:
@@ -58,9 +61,9 @@ one follow these steps:
    1. Create a new JSON key by selecting "Manage Keys" > "ADD KEY" > "CREATE".
    1. You can download the ".json" file containing the necessary credentials for future use.
 
-### Grab google OAuth credentials
+### Grab Google OAuth credentials
 
-You need to create a GCP account to get OAuth credentials, if you don't have one. To create one
+You need to create a GCP account to get OAuth credentials if you don't have one. To create one,
 follow these steps:
 
 1. Ensure your email used for the GCP account has access to the GA4 property.
@@ -69,38 +72,40 @@ follow these steps:
 
 1. Enable the Analytics API in the project.
 
-1. Search credentials in the search bar and go to Credentials.
+1. Search for credentials in the search bar and go to Credentials.
 
 1. Go to Credentials -> OAuth client ID -> Select Desktop App from the Application type and give an
    appropriate name.
 
-1. Download the credentials and fill "client_id", "client_secret" and "project_id" in
+1. Download the credentials and fill in "client_id", "client_secret", and "project_id" in
    "secrets.toml".
 
 1. Go back to credentials and select the OAuth consent screen on the left.
 
-1. Fill in the App name, user support email(your email), authorized domain (localhost.com), and dev
+1. Fill in the App name, user support email (your email), authorized domain (localhost.com), and dev
    contact info (your email again).
 
 1. Add the following scope:
 
-   ```
+   ```text
    "https://www.googleapis.com/auth/analytics.readonly"
    ```
 
 1. Add your email as a test user.
 
-After configuring "client_id", "client_secret" and "project_id" in "secrets.toml". To generate the
-refresh token run the following script from the root folder:
+After configuring "client_id", "client_secret", and "project_id" in "secrets.toml", to generate the
+refresh token, run the following script from the root folder:
 
-```bash
-python3 google_analytics/setup_script_gcp_oauth.py
+```sh
+python google_analytics/setup_script_gcp_oauth.py
 ```
 
 Once you have executed the script and completed the authentication, you will receive a "refresh
 token" that can be used to set up the "secrets.toml".
 
-### Share the Google Analytics Property with the API:
+
+
+### Share the Google Analytics property with the API
 
 > Note: For service account authentication, use the client_email. For OAuth authentication, use the
 > email associated with the app creation and refresh token generation.
@@ -128,7 +133,7 @@ To get started with your data pipeline, follow these steps:
 
 1. Enter the following command:
 
-   ```bash
+   ```sh
    dlt init google_analytics duckdb
    ```
 
@@ -143,8 +148,7 @@ To get started with your data pipeline, follow these steps:
 1. After running this command, a new directory will be created with the necessary files and
    configuration settings to get started.
 
-For more information, read the
-[Walkthrough: Add a verified source.](../../walkthroughs/add-a-verified-source)
+For more information, read the guide on [how to add a verified source](../../walkthroughs/add-a-verified-source).
 
 ### Add credentials
 
@@ -161,10 +165,10 @@ For more information, read the
 
 1. From the ".json" that you
    [downloaded earlier](google_analytics.md#grab-google-service-account-credentials),
-   copy `project_id`, `private_key`,
-   and `client_email` under `[sources.google_analytics.credentials]`.
+   copy `project_id`, `private_key`,
+   and `client_email` under `[sources.google_analytics.credentials]`.
 
-1. Alternatively, if you're using OAuth credentials, replace the the fields and values with those
+1. Alternatively, if you're using OAuth credentials, replace the fields and values with those
    you [grabbed for OAuth credentials](google_analytics.md#grab-google-oauth-credentials).
 
 1. The secrets.toml for OAuth authentication looks like:
@@ -177,13 +181,13 @@ For more information, read the
    project_id = "project_id" # please set me up!
    ```
 
-1. Finally, enter credentials for your chosen destination as per the [docs](../destinations/).
+1. Finally, enter credentials for your chosen destination as per the [docs](../destinations/).
 
 #### Pass `property_id` and `request parameters`
 
 1. `property_id` is a unique number that identifies a particular property. You will need to
    explicitly pass it to get data from the property that you're interested in. For example, if the
-   property that you want to get data from is “GA4-Google Merch Shop” then you will need to pass its
+   property that you want to get data from is “GA4-Google Merch Shop,” then you will need to pass its
    property id "213025502".
 
    ![Property ID](./docs_images/GA4_Property_ID_size.png)
@@ -196,7 +200,7 @@ For more information, read the
 
    ```toml
    [sources.google_analytics]
-   property_id = "213025502" #  this is example property id, please use yours
+   property_id = "213025502" #  this is an example property id, please use yours
    queries = [
        {"resource_name"= "sample_analytics_data1", "dimensions"= ["browser", "city"], "metrics"= ["totalUsers", "transactions"]},
        {"resource_name"= "sample_analytics_data2", "dimensions"= ["browser", "city", "dateHour"], "metrics"= ["totalUsers"]}
@@ -209,26 +213,28 @@ For more information, read the
 1. To use queries from `.dlt/config.toml`, run the `simple_load_config()` function in
    [pipeline example](https://github.com/dlt-hub/verified-sources/blob/master/sources/google_analytics_pipeline.py).
 
+For more information, read the [General Usage: Credentials.](../../general-usage/credentials)
+
 ## Run the pipeline
 
 1. Before running the pipeline, ensure that you have installed all the necessary dependencies by
    running the command:
-   ```bash
+   ```sh
    pip install -r requirements.txt
    ```
 1. You're now ready to run the pipeline! To get started, run the following command:
-   ```bash
-   python3 google_analytics_pipeline.py
+   ```sh
+   python google_analytics_pipeline.py
    ```
 1. Once the pipeline has finished running, you can verify that everything loaded correctly by using
    the following command:
-   ```bash
+   ```sh
    dlt pipeline <pipeline_name> show
    ```
    For example, the `pipeline_name` for the above pipeline example is
-   `dlt_google_analytics_pipeline`, you may also use any custom name instead.
+   `dlt_google_analytics_pipeline`, but you may also use any custom name instead.
 
-For more information, read the [Walkthrough: Run a pipeline.](../../walkthroughs/run-a-pipeline)
+For more information, read the guide on [how to run a pipeline](../../walkthroughs/run-a-pipeline).
 
 ## Sources and resources
 
@@ -238,17 +244,18 @@ For more information, read the [Walkthrough: Run a pipeline.](../../walkthroughs
 ### Source `simple_load`
 
 This function returns a list of resources including metadata, metrics, and dimensions data from
-Google Analytics API.
+the Google Analytics API.
 
-```python
+```py
 @dlt.source(max_table_nesting=2)
 def google_analytics(
-    credentials: Union[ GcpOAuthCredentials, GcpServiceAccountCredential ] = dlt.secrets.value,
+    credentials: Union[ GcpOAuthCredentials, GcpServiceAccountCredentials ] = dlt.secrets.value,
     property_id: int = dlt.config.value,
     queries: List[DictStrAny] = dlt.config.value,
-    start_date: Optional[str] = START_DATE,
+    start_date: Optional[str] = START_DATE_STRING,
     rows_per_page: int = 1000,
 ) -> List[DltResource]:
+   ...
 ```
 
 `credentials`: GCP OAuth or service account credentials.
@@ -268,9 +275,10 @@ set to 1000.
 
 This function retrieves all the metrics and dimensions for a report from a Google Analytics project.
 
-```python
+```py
 @dlt.resource(selected=False)
 def get_metadata(client: Resource, property_id: int) -> Iterator[Metadata]:
+   ...
 ```
 
 `client`: This is the Google Analytics client used to make requests.
@@ -280,10 +288,9 @@ def get_metadata(client: Resource, property_id: int) -> Iterator[Metadata]:
 
 ### Transformer `metrics_table`
 
-This transformer function extracts data using metadata and populates a table called "metrics" with
-the data from each metric.
+This transformer function extracts data using metadata and populates a table called "metrics" with the data from each metric.
 
-```python
+```py
 @dlt.transformer(data_from=get_metadata, write_disposition="replace", name="metrics")
 def metrics_table(metadata: Metadata) -> Iterator[TDataItem]:
     for metric in metadata.metrics:
@@ -292,45 +299,44 @@ def metrics_table(metadata: Metadata) -> Iterator[TDataItem]:
 
 `metadata`: GA4 metadata is stored in this "Metadata" class object.
 
-Similarly, there is a transformer function called `dimensions_table` that populates table called
-"dimensions" with the data from each dimension.
+Similarly, there is a transformer function called `dimensions_table` that populates a table called "dimensions" with the data from each dimension.
 
+## Customization
 ### Create your own pipeline
 
-If you wish to create your own pipelines, you can leverage source and resource methods from this
-verified source.
+If you wish to create your own pipelines, you can leverage source and resource methods from this verified source.
 
 1. Configure the pipeline by specifying the pipeline name, destination, and dataset as follows:
 
-   ```python
+   ```py
    pipeline = dlt.pipeline(
-      pipeline_name="google_analytics",  # Use a custom name if desired
-      destination="duckdb",  # Choose the appropriate destination (e.g., duckdb, redshift, post)
-      dataset_name="GA4_data"  # Use a custom name if desired
+       pipeline_name="google_analytics",  # Use a custom name if desired
+       destination="duckdb",  # Choose the appropriate destination (e.g., duckdb, redshift, post)
+       dataset_name="GA4_data"  # Use a custom name if desired
    )
    ```
 
-   To read more about pipeline configuration, please refer to our
-   [documentation](../../general-usage/pipeline).
+   To read more about pipeline configuration, please refer to our [documentation](../../general-usage/pipeline).
 
 1. To load all the data from metrics and dimensions:
 
-   ```python
+   ```py
    load_data = google_analytics()
    load_info = pipeline.run(load_data)
    print(load_info)
    ```
 
-   > Loads all the data till date in the first run, and then
-   > [incrementally](https://dlthub.com/docs/general-usage/incremental-loading) in subsequent runs.
+   > Loads all the data to date in the first run, and then [incrementally](../../general-usage/incremental-loading) in subsequent runs.
 
 1. To load data from a specific start date:
 
-   ```python
+   ```py
    load_data = google_analytics(start_date='2023-01-01')
-   load_info = pipeline.run(load_data).
+   load_info = pipeline.run(load_data)
    print(load_info)
    ```
 
-   > Loads data starting from the specified date during the first run, and then
-   > [incrementally](https://dlthub.com/docs/general-usage/incremental-loading) in subsequent runs.
+   > Loads data starting from the specified date during the first run, and then [incrementally](../../general-usage/incremental-loading) in subsequent runs.
+
+<!--@@@DLT_TUBA google_analytics-->
+

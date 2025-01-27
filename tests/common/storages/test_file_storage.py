@@ -39,37 +39,42 @@ def test_to_relative_path(test_storage: FileStorage) -> None:
 def test_make_full_path(test_storage: FileStorage) -> None:
     # fully within storage
     relative_path = os.path.join("dir", "to", "file")
-    path = test_storage.make_full_path(relative_path)
+    path = test_storage.make_full_path_safe(relative_path)
     assert path.endswith(os.path.join(TEST_STORAGE_ROOT, relative_path))
     # overlapped with storage
     root_path = os.path.join(TEST_STORAGE_ROOT, relative_path)
-    path = test_storage.make_full_path(root_path)
+    path = test_storage.make_full_path_safe(root_path)
     assert path.endswith(root_path)
     assert path.count(TEST_STORAGE_ROOT) == 2
     # absolute path with different root than TEST_STORAGE_ROOT does not lead into storage so calculating full path impossible
     with pytest.raises(ValueError):
-        test_storage.make_full_path(os.path.join("/", root_path))
+        test_storage.make_full_path_safe(os.path.join("/", root_path))
     # relative path out of the root
     with pytest.raises(ValueError):
-        test_storage.make_full_path("..")
+        test_storage.make_full_path_safe("..")
     # absolute overlapping path
-    path = test_storage.make_full_path(os.path.abspath(root_path))
+    path = test_storage.make_full_path_safe(os.path.abspath(root_path))
     assert path.endswith(root_path)
-    assert test_storage.make_full_path("") == test_storage.storage_path
-    assert test_storage.make_full_path(".") == test_storage.storage_path
+    assert test_storage.make_full_path_safe("") == test_storage.storage_path
+    assert test_storage.make_full_path_safe(".") == test_storage.storage_path
 
 
 def test_in_storage(test_storage: FileStorage) -> None:
     # always relative to storage root
-    assert test_storage.in_storage("a/b/c") is True
-    assert test_storage.in_storage(f"../{TEST_STORAGE_ROOT}/b/c") is True
-    assert test_storage.in_storage("../a/b/c") is False
-    assert test_storage.in_storage("../../../a/b/c") is False
-    assert test_storage.in_storage("/a") is False
-    assert test_storage.in_storage(".") is True
-    assert test_storage.in_storage(os.curdir) is True
-    assert test_storage.in_storage(os.path.realpath(os.curdir)) is False
-    assert test_storage.in_storage(os.path.join(os.path.realpath(os.curdir), TEST_STORAGE_ROOT)) is True
+    assert test_storage.is_path_in_storage("a/b/c") is True
+    assert test_storage.is_path_in_storage(f"../{TEST_STORAGE_ROOT}/b/c") is True
+    assert test_storage.is_path_in_storage("../a/b/c") is False
+    assert test_storage.is_path_in_storage("../../../a/b/c") is False
+    assert test_storage.is_path_in_storage("/a") is False
+    assert test_storage.is_path_in_storage(".") is True
+    assert test_storage.is_path_in_storage(os.curdir) is True
+    assert test_storage.is_path_in_storage(os.path.realpath(os.curdir)) is False
+    assert (
+        test_storage.is_path_in_storage(
+            os.path.join(os.path.realpath(os.curdir), TEST_STORAGE_ROOT)
+        )
+        is True
+    )
 
 
 def test_from_wd_to_relative_path(test_storage: FileStorage) -> None:
@@ -129,31 +134,31 @@ def test_validate_file_name_component() -> None:
 
 @pytest.mark.parametrize("action", ("rename_tree_files", "rename_tree", "atomic_rename"))
 def test_rename_nested_tree(test_storage: FileStorage, action: str) -> None:
-    source_dir = os.path.join(test_storage.storage_path, 'source')
-    nested_dir_1 = os.path.join(source_dir, 'nested1')
-    nested_dir_2 = os.path.join(nested_dir_1, 'nested2')
-    empty_dir = os.path.join(source_dir, 'empty')
+    source_dir = os.path.join(test_storage.storage_path, "source")
+    nested_dir_1 = os.path.join(source_dir, "nested1")
+    nested_dir_2 = os.path.join(nested_dir_1, "nested2")
+    empty_dir = os.path.join(source_dir, "empty")
     os.makedirs(nested_dir_2)
     os.makedirs(empty_dir)
-    with open(os.path.join(source_dir, 'test1.txt'), 'w', encoding="utf-8") as f:
-        f.write('test')
-    with open(os.path.join(nested_dir_1, 'test2.txt'), 'w', encoding="utf-8") as f:
-        f.write('test')
-    with open(os.path.join(nested_dir_2, 'test3.txt'), 'w', encoding="utf-8") as f:
-        f.write('test')
+    with open(os.path.join(source_dir, "test1.txt"), "w", encoding="utf-8") as f:
+        f.write("test")
+    with open(os.path.join(nested_dir_1, "test2.txt"), "w", encoding="utf-8") as f:
+        f.write("test")
+    with open(os.path.join(nested_dir_2, "test3.txt"), "w", encoding="utf-8") as f:
+        f.write("test")
 
-    dest_dir = os.path.join(test_storage.storage_path, 'dest')
+    dest_dir = os.path.join(test_storage.storage_path, "dest")
 
     getattr(test_storage, action)(source_dir, dest_dir)
 
     assert not os.path.exists(source_dir)
     assert os.path.exists(dest_dir)
-    assert os.path.exists(os.path.join(dest_dir, 'nested1'))
-    assert os.path.exists(os.path.join(dest_dir, 'nested1', 'nested2'))
-    assert os.path.exists(os.path.join(dest_dir, 'empty'))
-    assert os.path.exists(os.path.join(dest_dir, 'test1.txt'))
-    assert os.path.exists(os.path.join(dest_dir, 'nested1', 'test2.txt'))
-    assert os.path.exists(os.path.join(dest_dir, 'nested1', 'nested2', 'test3.txt'))
+    assert os.path.exists(os.path.join(dest_dir, "nested1"))
+    assert os.path.exists(os.path.join(dest_dir, "nested1", "nested2"))
+    assert os.path.exists(os.path.join(dest_dir, "empty"))
+    assert os.path.exists(os.path.join(dest_dir, "test1.txt"))
+    assert os.path.exists(os.path.join(dest_dir, "nested1", "test2.txt"))
+    assert os.path.exists(os.path.join(dest_dir, "nested1", "nested2", "test3.txt"))
 
 
 @skipifnotwindows
@@ -161,7 +166,7 @@ def test_rmtree_ro(test_storage: FileStorage) -> None:
     test_storage.create_folder("protected")
     path = test_storage.save("protected/barbapapa.txt", "barbapapa")
     os.chmod(path, stat.S_IREAD)
-    os.chmod(test_storage.make_full_path("protected"), stat.S_IREAD)
+    os.chmod(test_storage.make_full_path_safe("protected"), stat.S_IREAD)
     with pytest.raises(PermissionError):
         test_storage.delete_folder("protected", recursively=True, delete_ro=False)
     test_storage.delete_folder("protected", recursively=True, delete_ro=True)
@@ -236,3 +241,30 @@ def test_open_compressed() -> None:
         content = f.read()
         assert isinstance(content, str)
         assert content == bstr.decode("utf-8")
+
+
+def test_hard_link() -> None:
+    storage = FileStorage(TEST_STORAGE_ROOT, file_type="b")
+    storage.save("file.b", b"data")
+    FileStorage.link_hard_with_fallback(
+        storage.make_full_path("file.b"), storage.make_full_path("file.b.2")
+    )
+    assert storage.load("file.b.2") == b"data"
+    storage.delete("file.b")
+    assert storage.load("file.b.2") == b"data"
+    storage.delete("file.b.2")
+
+
+def test_hard_link_fallback() -> None:
+    if not os.path.exists("/run/lock"):
+        pytest.skip("/run/lock not found - skipping link fallback")
+    with open("/run/lock/dlt.r", "wb") as f:
+        f.write(b"data")
+    storage = FileStorage(TEST_STORAGE_ROOT, file_type="b")
+    with pytest.raises(OSError):
+        os.link("/run/lock/dlt.r", storage.make_full_path("file.b.2"))
+    FileStorage.link_hard_with_fallback("/run/lock/dlt.r", storage.make_full_path("file.b.2"))
+    assert storage.load("file.b.2") == b"data"
+    os.unlink("/run/lock/dlt.r")
+    assert storage.load("file.b.2") == b"data"
+    storage.delete("file.b.2")

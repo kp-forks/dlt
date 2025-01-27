@@ -13,11 +13,17 @@ NORMALIZE = "normalize"
 EXTRACT = "extract"
 """extract stage of the pipeline"""
 
+SCHEMA = "schema"
+"""schema configuration, ie. normalizers"""
+
 PROVIDERS = "providers"
 """secrets and config providers"""
 
 DATA_WRITER = "data_writer"
 """default section holding BufferedDataWriter settings"""
 
-DBT_PACKAGE_RUNNER =  "dbt_package_runner"
+DBT_PACKAGE_RUNNER = "dbt_package_runner"
 """dbt package runner configuration (DBTRunnerConfiguration)"""
+
+DBT_CLOUD = "dbt_cloud"
+"""dbt cloud helpers configuration (DBTCloudConfiguration)"""

@@ -7,7 +7,7 @@ from typing import Iterator
 import fsspec
 import pytest
 
-from dlt.common.storages import filesystem
+from dlt.common.storages import fsspec_filesystem
 from dlt.common.storages.transactional_file import TransactionalFile
 
 from tests.utils import skipifwindows
@@ -15,7 +15,7 @@ from tests.utils import skipifwindows
 
 @pytest.fixture(scope="session")
 def fs() -> fsspec.AbstractFileSystem:
-    return filesystem("file")[0]
+    return fsspec_filesystem("file")[0]
 
 
 @pytest.fixture
@@ -109,7 +109,9 @@ def test_file_transaction_multiple_writers(fs: fsspec.AbstractFileSystem, file_n
         assert writer_2.read() == b"test 4"
 
 
-def test_file_transaction_multiple_writers_with_races(fs: fsspec.AbstractFileSystem, file_name: str):
+def test_file_transaction_multiple_writers_with_races(
+    fs: fsspec.AbstractFileSystem, file_name: str
+):
     writer_1 = TransactionalFile(file_name, fs)
     time.sleep(0.5)
     writer_2 = TransactionalFile(file_name, fs)
@@ -129,8 +131,10 @@ def test_file_transaction_simultaneous(fs: fsspec.AbstractFileSystem):
 
     pool = ThreadPoolExecutor(max_workers=40)
     results = pool.map(
-        lambda _: TransactionalFile(
-        "/bucket/test_123", fs).acquire_lock(blocking=False, jitter_mean=0.3), range(200)
+        lambda _: TransactionalFile("/bucket/test_123", fs).acquire_lock(
+            blocking=False, jitter_mean=0.3
+        ),
+        range(200),
     )
     assert sum(results) == 1
 

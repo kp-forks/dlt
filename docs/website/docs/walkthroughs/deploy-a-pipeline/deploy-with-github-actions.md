@@ -22,19 +22,19 @@ initialize a Git repo in your `dlt` project directory and push it to GitHub as d
 
 Before you can deploy, you need a working pipeline. Make sure that it is working by running
 
-```shell
+```sh
 python3 chess_pipeline.py # replace chess_pipeline.py with your pipeline file
 ```
 
 This should successfully load data from the source to the destination once.
 
 ## Initialize deployment
-First you need to add additional dependencies that `deploy` command requires:
-```bash
+First, you need to add additional dependencies that the `deploy` command requires:
+```sh
 pip install "dlt[cli]"
 ```
-then the command below will create a Github workflow that runs your pipeline script every 30 minutes:
-```shell
+Then, the command below will create a GitHub workflow that runs your pipeline script every 30 minutes:
+```sh
 dlt deploy chess_pipeline.py github-action --schedule "*/30 * * * *"
 ```
 
@@ -52,13 +52,13 @@ out by the `dlt deploy` command line tool.
 
 To finish the GitHub Actions workflow setup, you need to first add and commit your files:
 
-```shell
+```sh
 git add . && git commit -m 'pipeline deployed with github action'
 ```
 
 And then push them to GitHub:
 
-```shell
+```sh
 git push origin
 ```
 
@@ -71,9 +71,10 @@ repository.
 
 ## Known limitations
 
-The GitHub cron scheduler has fidelity of ~30 minutes. You cannot expect that your job will be run
-at the exact the intervals or times you specify.
+The GitHub cron scheduler has a fidelity of ~30 minutes. You cannot expect that your job will be run
+at the exact intervals or times you specify.
 
 - The minimum official supported interval is 5 minutes.
 - If you set it to 5 minutes, you can expect intervals between 5 and 30 minutes.
 - From practical experience, any intervals above 30 minutes work on average as expected.
+
