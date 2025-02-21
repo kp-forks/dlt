@@ -1,19 +1,17 @@
 import ast
 import os
-import tempfile
 from typing import Callable
 
-from dlt.common import git
 from dlt.common.reflection.utils import set_ast_parents
-from dlt.common.storages import FileStorage
 from dlt.common.typing import TFun
 from dlt.common.configuration import resolve_configuration
-from dlt.common.configuration.specs import RunConfiguration
+from dlt.common.configuration.specs import RuntimeConfiguration
 from dlt.common.runtime.telemetry import with_telemetry
+from dlt.common.runtime import run_context
 
 from dlt.reflection.script_visitor import PipelineScriptVisitor
 
-from dlt.cli.exceptions import CliCommandException
+from dlt.cli.exceptions import CliCommandInnerException
 
 
 REQUIREMENTS_TXT = "requirements.txt"
@@ -25,14 +23,20 @@ LOCAL_COMMAND_REPO_FOLDER = "repos"
 MODULE_INIT = "__init__.py"
 
 
-def parse_init_script(command: str, script_source: str, init_script_name: str) -> PipelineScriptVisitor:
+def parse_init_script(
+    command: str, script_source: str, init_script_name: str
+) -> PipelineScriptVisitor:
     # parse the script first
     tree = ast.parse(source=script_source)
     set_ast_parents(tree)
     visitor = PipelineScriptVisitor(script_source)
     visitor.visit_passes(tree)
     if len(visitor.mod_aliases) == 0:
-        raise CliCommandException(command, f"The pipeline script {init_script_name} does not import dlt and does not seem to run any pipelines")
+        raise CliCommandInnerException(
+            command,
+            f"The pipeline script {init_script_name} does not import dlt and does not seem to run"
+            " any pipelines",
+        )
 
     return visitor
 
@@ -43,10 +47,11 @@ def ensure_git_command(command: str) -> None:
     except ImportError as imp_ex:
         if "Bad git executable" not in str(imp_ex):
             raise
-        raise CliCommandException(
+        raise CliCommandInnerException(
             command,
-            "'git' command is not available. Install and setup git with the following the guide %s" % "https://docs.github.com/en/get-started/quickstart/set-up-git",
-            imp_ex
+            "'git' command is not available. Install and setup git with the following the guide %s"
+            % "https://docs.github.com/en/get-started/quickstart/set-up-git",
+            imp_ex,
         ) from imp_ex
 
 
@@ -55,5 +60,13 @@ def track_command(command: str, track_before: bool, *args: str) -> Callable[[TFu
 
 
 def get_telemetry_status() -> bool:
-    c = resolve_configuration(RunConfiguration())
+    c = resolve_configuration(RuntimeConfiguration())
     return c.dlthub_telemetry
+
+
+def make_dlt_settings_path(path: str = None) -> str:
+    """Returns path to file in dlt settings folder. Returns settings folder if path not specified."""
+    ctx = run_context.active()
+    if not path:
+        return ctx.settings_dir
+    return ctx.get_setting(path)

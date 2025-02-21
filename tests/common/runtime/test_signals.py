@@ -65,7 +65,6 @@ def test_delayed_signals_context_manager() -> None:
 
 
 def test_sleep_signal() -> None:
-
     thread_signal = 0
 
     def _thread() -> None:
@@ -122,3 +121,8 @@ def test_signalling() -> None:
         assert exc.value.signal_code == 15
         p.join()
         assert thread_signal == 15
+
+
+def test_cleanup() -> None:
+    # this must happen after all forked tests (problems with tests teardowns in other tests)
+    pass

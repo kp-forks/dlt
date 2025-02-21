@@ -10,149 +10,349 @@
  */
 
 // @ts-check
+const fs = require('fs');
+const path = require('path');
+
+
+function *walkSync(dir) {
+  const files = fs.readdirSync(dir, { withFileTypes: true });
+  for (const file of files) {
+    if (file.isDirectory()) {
+      yield* walkSync(path.join(dir, file.name));
+    } else {
+      yield path.join(dir, file.name);
+    }
+  }
+}
 
 /** @type {import('@docusaurus/plugin-content-docs').SidebarsConfig} */
 const sidebars = {
   tutorialSidebar: [
-    'intro',
-    'getting-started',
-    'build-a-pipeline-tutorial',
     {
       type: 'category',
-      label: 'dlt Ecosystem',
+      label: 'Getting started',
       link: {
-        type: 'generated-index',
-        title: 'dlt Ecosystem',
-        description: 'dlt fits everywhere where the data flows. check out our curated data sources, destinations and unexpected places where dlt runs',
-        slug: 'dlt-ecosystem',
-        keywords: ['getting started'],
+        type: 'doc',
+        id: 'intro',
       },
       items: [
-        {
-          type: 'category',
-          label: 'Verified Sources',
-          link: {
-            type: 'doc',
-            id: 'dlt-ecosystem/verified-sources/index',
-          },
-          items: [
-            'dlt-ecosystem/verified-sources/airtable',
-            'dlt-ecosystem/verified-sources/asana',
-            'dlt-ecosystem/verified-sources/chess',
-            'dlt-ecosystem/verified-sources/facebook_ads',
-            'dlt-ecosystem/verified-sources/github',
-            'dlt-ecosystem/verified-sources/google_analytics',
-            'dlt-ecosystem/verified-sources/google_sheets',
-            'dlt-ecosystem/verified-sources/hubspot',
-            'dlt-ecosystem/verified-sources/jira',
-            'dlt-ecosystem/verified-sources/matomo',
-            'dlt-ecosystem/verified-sources/mongodb',
-            'dlt-ecosystem/verified-sources/mux',
-            'dlt-ecosystem/verified-sources/notion',
-            'dlt-ecosystem/verified-sources/pipedrive',
-            'dlt-ecosystem/verified-sources/salesforce',
-            'dlt-ecosystem/verified-sources/shopify',
-            'dlt-ecosystem/verified-sources/sql_database',
-            'dlt-ecosystem/verified-sources/slack',
-            'dlt-ecosystem/verified-sources/strapi',
-            'dlt-ecosystem/verified-sources/stripe',
-            'dlt-ecosystem/verified-sources/workable',
-            'dlt-ecosystem/verified-sources/zendesk'
-          ]
-        },
-        {
-          type: 'category',
-          label: 'File formats',
-          link: {
-            type: 'generated-index',
-            title: 'File formats',
-            description: 'Overview of our loader file formats',
-            slug: 'dlt-ecosystem/file-formats',
-            keywords: ['destination'],
-          },
-          items: [
-            'dlt-ecosystem/file-formats/jsonl',
-            'dlt-ecosystem/file-formats/parquet',
-            'dlt-ecosystem/file-formats/insert-format',
-          ]
-        },
-        {
-          type: 'category',
-          label: 'Destinations',
-          link: {
-            type: 'doc',
-            id: 'dlt-ecosystem/destinations/index',
-          },
-          items: [
-            'dlt-ecosystem/destinations/bigquery',
-            'dlt-ecosystem/destinations/duckdb',
-            'dlt-ecosystem/destinations/mssql',
-            'dlt-ecosystem/destinations/filesystem',
-            'dlt-ecosystem/destinations/postgres',
-            'dlt-ecosystem/destinations/redshift',
-            'dlt-ecosystem/destinations/snowflake',
-            'dlt-ecosystem/destinations/athena',
-            'dlt-ecosystem/destinations/motherduck',
-            'dlt-ecosystem/destinations/weaviate',
-          ]
-        },
-        'dlt-ecosystem/staging',
-        {
-          type: 'category',
-          label: 'Deployments',
-          link: {
-            type: 'doc',
-            id: 'dlt-ecosystem/deployments/index',
-          },
-          items: [
-            'walkthroughs/deploy-a-pipeline/deploy-with-github-actions',
-            'walkthroughs/deploy-a-pipeline/deploy-with-airflow-composer',
-            'walkthroughs/deploy-a-pipeline/deploy-with-google-cloud-functions',
-            'walkthroughs/deploy-a-pipeline/deploy-gcp-cloud-function-as-webhook',
-          ]
-        },
-        {
-          type: 'category',
-          label: 'Transformations',
-          link: {
-            type: 'generated-index',
-            title: 'Transformations',
-            description: 'If you want to transform the data after loading, you can use one of the following methods: dbt, SQL, Pandas.',
-            slug: 'dlt-ecosystem/transformations',
-            keywords: ['transformations'],
-          },
-          items: [
-            'dlt-ecosystem/transformations/dbt',
-            'dlt-ecosystem/transformations/sql',
-            'dlt-ecosystem/transformations/pandas',
-          ]
-        },
-        {
-          type: 'category',
-          label: 'Visualizations',
-          items: [
-            'dlt-ecosystem/visualizations/exploring-the-data',
-          ]
-        },
-      ],
+        'reference/installation',
+        'tutorial/rest-api',
+        'tutorial/sql-database',
+        'tutorial/filesystem',
+        'tutorial/load-data-from-an-api',
+      ]
     },
     {
       type: 'category',
-      label: 'Walkthroughs',
+      label: 'Core concepts',
+      items: [
+        'reference/explainers/how-dlt-works',
+        'general-usage/source',
+        'general-usage/resource',
+        'general-usage/pipeline',
+        'general-usage/destination',
+        'general-usage/state',
+        'general-usage/glossary'
+      ]
+    },
+    {
+      type: 'category',
+      label: 'dlt+',
+      link: {
+        type: 'doc',
+        id: 'plus/intro',
+      },
+      items: [
+        {
+          type: 'category',
+          label: 'Getting started',
+          items: [
+            'plus/getting-started/installation',
+            'plus/getting-started/tutorial',
+          ]
+        },
+        {
+          type: 'category',
+          label: 'Core concepts',
+          items: [
+            'plus/core-concepts/project',
+            'plus/core-concepts/cache',
+            'plus/core-concepts/datasets',
+            'plus/core-concepts/profiles',
+          ]
+        },
+        {
+          type: 'category',
+          label: 'Sources & Destinations',
+          items: [
+            'plus/ecosystem/ms-sql',
+            'plus/ecosystem/iceberg',
+            'plus/ecosystem/delta',
+          ]
+        },
+        {
+          type: 'category',
+          label: 'Features',
+          items: [
+            'plus/features/projects',
+            'plus/features/data-access',
+            {
+              type: 'category',
+              label: 'Local transformations',
+              link: {
+                type: 'doc',
+                id: 'plus/features/transformations/index',
+              },
+              items: [
+                'plus/features/transformations/setup',
+                'plus/features/transformations/dbt-transformations',
+                'plus/features/transformations/python-transformations',
+              ]
+            },
+            'plus/features/ai',
+            {
+              type: 'category',
+              label: 'Data quality & tests',
+              items: [
+                'plus/features/quality/tests',
+                'plus/features/quality/data-quality',
+              ]
+            },
+          ]
+        },
+        {
+          type: 'category',
+          label: 'Going to production',
+          items: [
+            'plus/production/runners',
+            'plus/production/observability',
+          ]
+        },
+        'plus/reference',
+      ]
+    },
+    {
+      type: 'category',
+      label: 'Sources',
+      link: {
+        type: 'doc',
+        id: 'dlt-ecosystem/verified-sources/index',
+      },
+      items: [
+        {
+          type: 'category',
+          label: 'REST APIs',
+          description:'Load data from any REST API',
+           link: {
+            type: 'doc',
+            id: 'dlt-ecosystem/verified-sources/rest_api/index',
+          },
+          items: [
+            'dlt-ecosystem/verified-sources/rest_api/basic',
+            'dlt-ecosystem/verified-sources/rest_api/advanced',
+            {
+              type: 'category',
+              label: 'REST API helpers',
+              link: {
+                type: 'doc',
+                id: 'general-usage/http/overview',
+              },
+              items: [
+                'general-usage/http/rest-client',
+                'general-usage/http/requests',
+              ]
+            },
+          ]
+        },
+        {
+          type: 'category',
+          label: '30+ SQL Databases',
+          description: 'PostgreSQL, MySQL, MS SQL, BigQuery, Redshift, and more',
+          link: {
+            type: 'doc',
+            id: 'dlt-ecosystem/verified-sources/sql_database/index',
+           },
+          items: [
+            'dlt-ecosystem/verified-sources/sql_database/setup',
+            'dlt-ecosystem/verified-sources/sql_database/configuration',
+            'dlt-ecosystem/verified-sources/sql_database/usage',
+            'dlt-ecosystem/verified-sources/sql_database/troubleshooting',
+            'dlt-ecosystem/verified-sources/sql_database/advanced',
+          ]
+        },
+        {
+          type: 'category',
+          label: 'Cloud storage and filesystem',
+          description: 'AWS S3, Google Cloud Storage, Azure, SFTP, local file system',
+            link: {
+            type: 'doc',
+            id: 'dlt-ecosystem/verified-sources/filesystem/index',
+          },
+          items: [
+            'dlt-ecosystem/verified-sources/filesystem/basic',
+            'dlt-ecosystem/verified-sources/filesystem/advanced',
+          ]
+        },
+        'dlt-ecosystem/verified-sources/airtable',
+        'dlt-ecosystem/verified-sources/amazon_kinesis',
+        'dlt-ecosystem/verified-sources/arrow-pandas',
+        'dlt-ecosystem/verified-sources/asana',
+        'dlt-ecosystem/verified-sources/chess',
+        'dlt-ecosystem/verified-sources/facebook_ads',
+        'dlt-ecosystem/verified-sources/freshdesk',
+        'dlt-ecosystem/verified-sources/github',
+        'dlt-ecosystem/verified-sources/google_ads',
+        'dlt-ecosystem/verified-sources/google_analytics',
+        'dlt-ecosystem/verified-sources/google_sheets',
+        'dlt-ecosystem/verified-sources/hubspot',
+        'dlt-ecosystem/verified-sources/inbox',
+        'dlt-ecosystem/verified-sources/jira',
+        'dlt-ecosystem/verified-sources/kafka',
+        'dlt-ecosystem/verified-sources/matomo',
+        'dlt-ecosystem/verified-sources/mongodb',
+        'dlt-ecosystem/verified-sources/mux',
+        'dlt-ecosystem/verified-sources/notion',
+        'dlt-ecosystem/verified-sources/personio',
+        'dlt-ecosystem/verified-sources/pg_replication',
+        'dlt-ecosystem/verified-sources/pipedrive',
+        'dlt-ecosystem/verified-sources/openapi-generator',
+        'dlt-ecosystem/verified-sources/salesforce',
+        'dlt-ecosystem/verified-sources/scrapy',
+        'dlt-ecosystem/verified-sources/shopify',
+        'dlt-ecosystem/verified-sources/slack',
+        'dlt-ecosystem/verified-sources/strapi',
+        'dlt-ecosystem/verified-sources/stripe',
+        'dlt-ecosystem/verified-sources/workable',
+        'dlt-ecosystem/verified-sources/zendesk',
+        'walkthroughs/add-a-verified-source',
+      ]
+    },
+    {
+      type: 'category',
+      label: 'Destinations',
+      link: {
+        type: 'doc',
+        id: 'dlt-ecosystem/destinations/index',
+      },
+      items: [
+        'dlt-ecosystem/destinations/bigquery',
+        'dlt-ecosystem/destinations/databricks',
+        'dlt-ecosystem/destinations/duckdb',
+        'dlt-ecosystem/destinations/mssql',
+        'dlt-ecosystem/destinations/synapse',
+        'dlt-ecosystem/destinations/clickhouse',
+        'dlt-ecosystem/destinations/filesystem',
+        'dlt-ecosystem/destinations/delta-iceberg',
+        'dlt-ecosystem/destinations/postgres',
+        'dlt-ecosystem/destinations/redshift',
+        'dlt-ecosystem/destinations/snowflake',
+        'dlt-ecosystem/destinations/athena',
+        'dlt-ecosystem/destinations/sqlalchemy',
+        'dlt-ecosystem/destinations/weaviate',
+        'dlt-ecosystem/destinations/lancedb',
+        'dlt-ecosystem/destinations/qdrant',
+        'dlt-ecosystem/destinations/dremio',
+        'dlt-ecosystem/destinations/destination',
+        'dlt-ecosystem/destinations/motherduck',
+        'walkthroughs/create-new-destination'
+      ]
+    },
+    {
+      type: 'category',
+      label: 'Using dlt',
       link: {
         type: 'generated-index',
-        title: 'Walktroughs',
-        description: 'Overview of our walkthroughs. Learn how to use and deploy dlt.',
-        slug: 'walkthroughs',
-        keywords: ['walkthrough'],
+        title: 'Using dlt',
+        slug: 'general-usage',
+        keywords: ['concepts', 'usage'],
       },
       items: [
         'walkthroughs/create-a-pipeline',
-        'walkthroughs/add-a-verified-source',
         'walkthroughs/run-a-pipeline',
-        'walkthroughs/adjust-a-schema',
+        {
+          type: 'category',
+          label: 'Accessing loaded data',
+           link: {
+            type: 'doc',
+            id: 'general-usage/dataset-access/index',
+          },
+          items: [
+            'general-usage/dataset-access/streamlit',
+            'general-usage/dataset-access/dataset',
+            'general-usage/dataset-access/ibis-backend',
+            'general-usage/dataset-access/sql-client',
+            'general-usage/dataset-access/data-quality-dashboard',
+          ]
+        },
+        {
+          type: 'category',
+          label: 'Transforming data',
+          link: {
+            type: 'doc',
+            id: 'dlt-ecosystem/transformations/index',
+          },
+          items: [
+            {
+              type: 'category',
+              label: 'Transforming data with dbt',
+              items: [
+                'dlt-ecosystem/transformations/dbt/dbt',
+                'dlt-ecosystem/transformations/dbt/dbt_cloud',
+              ]
+            },
+            'dlt-ecosystem/transformations/python',
+            'dlt-ecosystem/transformations/sql',
+            'general-usage/customising-pipelines/renaming_columns',
+            'general-usage/customising-pipelines/pseudonymizing_columns',
+            'general-usage/customising-pipelines/removing_columns'
+          ]
+        },
+        {
+          type: 'category',
+          label: 'Configuration and secrets',
+           link: {
+            type: 'doc',
+            id: 'general-usage/credentials/index',
+          },
+          items: [
+            'general-usage/credentials/setup',
+            'general-usage/credentials/advanced',
+            'general-usage/credentials/complex_types',
+            // Unsure item
+            'walkthroughs/add_credentials'
+          ]
+        },
+        {
+          type: 'category',
+          label: 'Schema',
+          link: {
+            type: 'doc',
+            id: 'general-usage/schema',
+          },
+          items: [
+            'general-usage/schema-contracts',
+            'general-usage/schema-evolution',
+            'walkthroughs/adjust-a-schema',
+          ]
+        },
+        {
+          type: 'category',
+          label: 'Loading Behavior',
+          items: [
+            'general-usage/incremental-loading',
+            'walkthroughs/add-incremental-configuration',
+            'general-usage/full-loading',
+          ]
+        },
+      ]
+    },
+    {
+      type: 'category',
+      label: 'Deploying dlt',
+      items: [
         'walkthroughs/share-a-dataset',
-         {
+        {
           type: 'category',
           label: 'Deploy a pipeline',
           link: {
@@ -164,75 +364,49 @@ const sidebars = {
           items: [
             'walkthroughs/deploy-a-pipeline/deploy-with-github-actions',
             'walkthroughs/deploy-a-pipeline/deploy-with-airflow-composer',
+            'reference/explainers/airflow-gcp-cloud-composer',
             'walkthroughs/deploy-a-pipeline/deploy-with-google-cloud-functions',
+            'walkthroughs/deploy-a-pipeline/deploy-with-google-cloud-run',
             'walkthroughs/deploy-a-pipeline/deploy-gcp-cloud-function-as-webhook',
+            'walkthroughs/deploy-a-pipeline/deploy-with-kestra',
+            'walkthroughs/deploy-a-pipeline/deploy-with-dagster',
+            'walkthroughs/deploy-a-pipeline/deploy-with-prefect',
+            'walkthroughs/deploy-a-pipeline/deploy-with-modal',
+            'walkthroughs/deploy-a-pipeline/deploy-with-orchestra',
           ]
         },
-        'walkthroughs/create-new-destination',
-        'walkthroughs/zendesk-weaviate',
-      ],
-    },
-    {
-      type: 'category',
-      label: 'General Usage',
-      link: {
-        type: 'generated-index',
-        title: 'General usage',
-        slug: 'general-usage',
-        keywords: ['general usage'],
-      },
-      items: [
-        'general-usage/resource',
-        'general-usage/source',
-        'general-usage/pipeline',
-        'general-usage/destination-tables',
-        'general-usage/state',
-        'general-usage/incremental-loading',
-        'general-usage/full-loading',
-        'general-usage/credentials',
-        'general-usage/schema',
-        'general-usage/configuration',
-        'general-usage/glossary',
         {
           type: 'category',
-          label: 'Customising pipelines',
+          label: 'Run in production',
+          link: {
+            type: 'generated-index',
+            title: 'Run in production',
+            description: 'How to run dlt in production.',
+            slug: 'running-in-production',
+            keywords: ['production'],
+          },
           items: [
-            'general-usage/customising-pipelines/renaming_columns',
-            'general-usage/customising-pipelines/pseudonymizing_columns',
-          ]
+            'running-in-production/running',
+            'running-in-production/monitoring',
+            'running-in-production/alerting',
+            'running-in-production/tracing',
+          ],
         },
-      ],
+      ]
     },
+    'reference/performance',
     {
       type: 'category',
-      label: 'Running in production',
+      label: 'Code examples',
       link: {
         type: 'generated-index',
-        title: 'Running in production',
-        description: 'Learn how to run dlt in production.',
-        slug: 'running-in-production',
-        keywords: ['production'],
-      },
-      items: [
-        'running-in-production/running',
-        'running-in-production/monitoring',
-        'running-in-production/alerting',
-        'running-in-production/tracing',
-      ],
-    },
-    {
-      type: 'category',
-      label: 'Code Examples',
-      link: {
-        type: 'generated-index',
-        title: 'Code Examples',
+        title: 'Code examples',
         description: 'A list of comprehensive code examples that teach you how to solve real world problem.',
         slug: 'examples',
         keywords: ['examples'],
       },
       items: [
-        'examples/transformers/index',
-        'examples/incremental_loading/index',
+        'walkthroughs/dispatch-to-multiple-tables',
       ],
     },
     {
@@ -241,26 +415,113 @@ const sidebars = {
       link: {
         type: 'generated-index',
         title: 'Reference',
-        description: 'The dlthub reference. Learn more about the dlt, CLI, and the telemetry.',
+        description: 'Learn more about the dlt, CLI, and the telemetry.',
         slug: 'reference',
         keywords: ['reference'],
       },
       items: [
-        require("./docs/api_reference/sidebar.json"),
-        'reference/installation',
         'reference/command-line-interface',
-        'reference/performance',
         'reference/telemetry',
-        'reference/explainers/how-dlt-works',
-        'reference/explainers/airflow-gcp-cloud-composer',
+        // Unsure item
+        'general-usage/destination-tables',
+        'general-usage/naming-convention',
+        'dlt-ecosystem/staging',
+        {
+          type: 'category',
+          label: 'File formats',
+          link: {
+            type: 'generated-index',
+            title: 'File formats',
+            description: 'Overview of our loader file formats',
+            slug: 'dlt-ecosystem/file-formats',
+            keywords: ['destination', 'file formats'],
+          },
+          items: [
+            'dlt-ecosystem/file-formats/jsonl',
+            'dlt-ecosystem/file-formats/parquet',
+            'dlt-ecosystem/file-formats/csv',
+            'dlt-ecosystem/file-formats/insert-format',
+          ]
+        },
+        {
+          type: 'category',
+          label: 'Table formats',
+          link: {
+            type: 'generated-index',
+            title: 'Table formats',
+            slug: 'dlt-ecosystem/table-formats',
+            keywords: ['destination, table formats'],
+          },
+          items: [
+            'dlt-ecosystem/table-formats/delta',
+            'dlt-ecosystem/table-formats/iceberg',
+          ]
+        },
+        'reference/frequently-asked-questions',
       ],
     },
-    // {
-    //   "API Documentation": [
-    //   require("./docs/api_reference/sidebar.json")
-    // ],
-    // }
+    /*
+    {
+      type: 'category',
+      label: 'How-to guides',
+      link: {
+        type: 'generated-index',
+        title: 'How-to guides',
+        description: 'In this section you will find step-by-step instructions for the common tasks.',
+        slug: 'walkthroughs',
+        keywords: ['how-to'],
+      },
+      items: [
+        {
+          type: 'category',
+          label: 'Data enrichments',
+          items: [
+            'general-usage/data-enrichments/user_agent_device_data_enrichment',
+            'general-usage/data-enrichments/currency_conversion_data_enrichment',
+            'general-usage/data-enrichments/url-parser-data-enrichment'
+          ]
+        }
+      ]
+    }
+    */
   ]
 };
 
+// insert examples
+for (const item of sidebars.tutorialSidebar) {
+  if (item.label === 'Code examples') {
+    for (let examplePath of walkSync("./docs_processed/examples")) {
+      examplePath = examplePath.replace("docs_processed/", "");
+      examplePath = examplePath.replace(".md", "");
+      item.items.push(examplePath);
+    }
+  }
+}
+
+
+// inject api reference if it exists
+if (fs.existsSync('./docs_processed/api_reference/sidebar.json')) {
+  for (const item of sidebars.tutorialSidebar) {
+    if (item.label === 'Reference') {
+      item.items.splice(0,0,require("./docs_processed/api_reference/sidebar.json"));
+    }
+  }
+}
+
 module.exports = sidebars;
+
+
+/*
+blog:
+'build-a-pipeline-tutorial',
+'walkthroughs/zendesk-weaviate',
+{
+  type: 'category',
+  label: 'Data enrichments',
+  items: [
+    'general-usage/data-enrichments/user_agent_device_data_enrichment',
+    'general-usage/data-enrichments/currency_conversion_data_enrichment',
+    'general-usage/data-enrichments/url-parser-data-enrichment'
+  ]
+},
+*/

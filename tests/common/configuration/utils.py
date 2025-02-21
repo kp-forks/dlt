@@ -1,16 +1,31 @@
 import pytest
 from os import environ
 import datetime  # noqa: I251
-from typing import Any, Iterator, List, Optional, Tuple, Type, Dict, MutableMapping, Optional, Sequence, TYPE_CHECKING
+from typing import (
+    Any,
+    ClassVar,
+    Iterator,
+    List,
+    Optional,
+    Tuple,
+    Type,
+    Dict,
+    MutableMapping,
+    Optional,
+    Sequence,
+    TYPE_CHECKING,
+)
 
 from dlt.common import Decimal, pendulum
 from dlt.common.configuration import configspec
 from dlt.common.configuration.specs import BaseConfiguration, CredentialsConfiguration
 from dlt.common.configuration.container import Container
-from dlt.common.configuration.providers import ConfigProvider, EnvironProvider, ConfigTomlProvider, SecretsTomlProvider
+from dlt.common.configuration.providers import ConfigProvider, EnvironProvider
+from dlt.common.configuration.specs.connection_string_credentials import ConnectionStringCredentials
 from dlt.common.configuration.utils import get_resolved_traces
-from dlt.common.configuration.specs.config_providers_context import ConfigProvidersContext
+from dlt.common.configuration.specs.config_providers_context import ConfigProvidersContainer
 from dlt.common.typing import TSecretValue, StrAny
+from tests.utils import _inject_providers, _reset_providers, inject_providers
 
 
 @configspec
@@ -33,7 +48,7 @@ class CoercionTestConfiguration(BaseConfiguration):
     tuple_val: Tuple[int, int, StrAny] = None
     any_val: Any = None
     none_val: str = None
-    COMPLEX_VAL: Dict[str, Tuple[int, List[str], List[str]]] = None
+    NESTED_VAL: Dict[str, Tuple[int, List[str], List[str]]] = None
     date_val: datetime.datetime = None
     dec_val: Decimal = None
     sequence_val: Sequence[str] = None
@@ -54,18 +69,20 @@ class SecretCredentials(CredentialsConfiguration):
 
 @configspec
 class WithCredentialsConfiguration(BaseConfiguration):
-    credentials: SecretCredentials
+    credentials: SecretCredentials = None
 
 
 @configspec
 class SectionedConfiguration(BaseConfiguration):
-    __section__ = "DLT_TEST"
+    __section__: ClassVar[str] = "DLT_TEST"
 
     password: str = None
 
-    if TYPE_CHECKING:
-        def __init__(self, password: str = None) -> None:
-            ...
+
+@configspec
+class ConnectionStringCompatCredentials(ConnectionStringCredentials):
+    database: str = None
+    username: str = None
 
 
 @pytest.fixture(scope="function")
@@ -84,38 +101,26 @@ def reset_resolved_traces() -> None:
 
 @pytest.fixture(scope="function")
 def mock_provider() -> Iterator["MockProvider"]:
-    container = Container()
-    with container.injectable_context(ConfigProvidersContext()) as providers:
-        # replace all providers with MockProvider that does not support secrets
-        mock_provider = MockProvider()
-        providers.providers = [mock_provider]
+    mock_provider = MockProvider()
+    # replace all providers with MockProvider that does not support secrets
+    with inject_providers([mock_provider]):
         yield mock_provider
 
 
 @pytest.fixture(scope="function")
 def env_provider() -> Iterator[ConfigProvider]:
-    container = Container()
-    with container.injectable_context(ConfigProvidersContext()) as providers:
-        # inject only env provider
-        env_provider = EnvironProvider()
-        providers.providers = [env_provider]
+    env_provider = EnvironProvider()
+    # inject only env provider
+    with inject_providers([env_provider]):
         yield env_provider
 
 
 @pytest.fixture
-def toml_providers() -> Iterator[ConfigProvidersContext]:
-    pipeline_root = "./tests/common/cases/configuration/.dlt"
-    ctx = ConfigProvidersContext()
-    ctx.providers.clear()
-    ctx.add_provider(EnvironProvider())
-    ctx.add_provider(SecretsTomlProvider(project_dir=pipeline_root))
-    ctx.add_provider(ConfigTomlProvider(project_dir=pipeline_root))
-    with Container().injectable_context(ctx):
-        yield ctx
+def toml_providers() -> Iterator[ConfigProvidersContainer]:
+    yield from _reset_providers("./tests/common/cases/configuration/.dlt")
 
 
 class MockProvider(ConfigProvider):
-
     def __init__(self) -> None:
         self.value: Any = None
         self.return_value_on: Tuple[str, ...] = ()
@@ -125,9 +130,11 @@ class MockProvider(ConfigProvider):
         self.last_section: Tuple[str, ...] = None
         self.last_sections: List[Tuple[str, ...]] = []
 
-    def get_value(self, key: str, hint: Type[Any], pipeline_name: str, *sections: str) -> Tuple[Optional[Any], str]:
+    def get_value(
+        self, key: str, hint: Type[Any], pipeline_name: str, *sections: str
+    ) -> Tuple[Optional[Any], str]:
         if pipeline_name:
-            sections = (pipeline_name, ) + sections
+            sections = (pipeline_name,) + sections
         self.last_section = sections
         self.last_sections.append(sections)
         if sections == self.return_value_on:
@@ -156,27 +163,21 @@ class SecretMockProvider(MockProvider):
 
 
 COERCIONS = {
-    'str_val': 'test string',
-    'int_val': 12345,
-    'bool_val': True,
-    'list_val': [1, "2", [3]],
-    'dict_val': {
-        'a': 1,
-        "b": "2"
-    },
-    'bytes_val': b'Hello World!',
-    'float_val': 1.18927,
+    "str_val": "test string",
+    "int_val": 12345,
+    "bool_val": True,
+    "list_val": [1, "2", [3]],
+    "dict_val": {"a": 1, "b": "2"},
+    "bytes_val": b"Hello World!",
+    "float_val": 1.18927,
     "tuple_val": (1, 2, {"1": "complicated dicts allowed in literal eval"}),
-    'any_val': "function() {}",
-    'none_val': "none",
-    'COMPLEX_VAL': {
-        "_": [1440, ["*"], []],
-        "change-email": [560, ["*"], []]
-    },
+    "any_val": "function() {}",
+    "none_val": "none",
+    "NESTED_VAL": {"_": [1440, ["*"], []], "change-email": [560, ["*"], []]},
     "date_val": pendulum.now(),
     "dec_val": Decimal("22.38"),
     "sequence_val": ["A", "B", "KAPPA"],
     "gen_list_val": ["C", "Z", "N"],
     "mapping_val": {"FL": 1, "FR": {"1": 2}},
-    "mutable_mapping_val": {"str": "str"}
+    "mutable_mapping_val": {"str": "str"},
 }

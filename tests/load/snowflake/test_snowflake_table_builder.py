@@ -4,44 +4,125 @@ import pytest
 import sqlfluff
 
 from dlt.common.utils import uniq_id
-from dlt.common.schema import Schema
-from dlt.destinations.snowflake.snowflake import SnowflakeClient
-from dlt.destinations.snowflake.configuration import SnowflakeClientConfiguration, SnowflakeCredentials
-from dlt.destinations.exceptions import DestinationSchemaWillNotUpdate
+from dlt.common.schema import Schema, utils
+from dlt.destinations import snowflake
+from dlt.destinations.impl.snowflake.snowflake import SnowflakeClient, SUPPORTED_HINTS
+from dlt.destinations.impl.snowflake.configuration import (
+    SnowflakeClientConfiguration,
+    SnowflakeCredentials,
+)
 
-from tests.load.utils import TABLE_UPDATE
+from tests.load.utils import TABLE_UPDATE, empty_schema
+
+# mark all tests as essential, do not remove
+pytestmark = pytest.mark.essential
 
 
 @pytest.fixture
-def schema() -> Schema:
-    return Schema("event")
+def cs_client(empty_schema: Schema) -> SnowflakeClient:
+    # change normalizer to case sensitive
+    empty_schema._normalizers_config["names"] = "tests.common.cases.normalizers.title_case"
+    empty_schema.update_normalizers()
+    return create_client(empty_schema)
 
 
 @pytest.fixture
-def snowflake_client(schema: Schema) -> SnowflakeClient:
+def snowflake_client(empty_schema: Schema) -> SnowflakeClient:
+    return create_client(empty_schema)
+
+
+def create_client(schema: Schema) -> SnowflakeClient:
     # return client without opening connection
     creds = SnowflakeCredentials()
-    return SnowflakeClient(schema, SnowflakeClientConfiguration(dataset_name="test_" + uniq_id(), credentials=creds))
+    return snowflake().client(
+        schema,
+        SnowflakeClientConfiguration(credentials=creds)._bind_dataset_name(
+            dataset_name="test_" + uniq_id()
+        ),
+    )
 
 
 def test_create_table(snowflake_client: SnowflakeClient) -> None:
+    # make sure we are in case insensitive mode
+    assert snowflake_client.capabilities.generates_case_sensitive_identifiers() is False
+    # check if dataset name is properly folded
+    assert (
+        snowflake_client.sql_client.fully_qualified_dataset_name(escape=False)
+        == snowflake_client.config.dataset_name.upper()
+    )
+    with snowflake_client.sql_client.with_staging_dataset():
+        assert (
+            snowflake_client.sql_client.fully_qualified_dataset_name(escape=False)
+            == (
+                snowflake_client.config.staging_dataset_name_layout
+                % snowflake_client.config.dataset_name
+            ).upper()
+        )
+
     statements = snowflake_client._get_table_update_sql("event_test_table", TABLE_UPDATE, False)
     assert len(statements) == 1
     sql = statements[0]
-    sqlfluff.parse(sql, dialect='snowflake')
+    sqlfluff.parse(sql, dialect="snowflake")
 
     assert sql.strip().startswith("CREATE TABLE")
     assert "EVENT_TEST_TABLE" in sql
-    assert '"COL1" NUMBER(19,0) NOT NULL' in sql
-    assert '"COL2" FLOAT NOT NULL' in sql
-    assert '"COL3" BOOLEAN NOT NULL' in sql
-    assert '"COL4" TIMESTAMP_TZ NOT NULL' in sql
+    assert '"COL1" NUMBER(19,0)  NOT NULL' in sql
+    assert '"COL2" FLOAT  NOT NULL' in sql
+    assert '"COL3" BOOLEAN  NOT NULL' in sql
+    assert '"COL4" TIMESTAMP_TZ  NOT NULL' in sql
     assert '"COL5" VARCHAR' in sql
-    assert '"COL6" NUMBER(38,9) NOT NULL' in sql
+    assert '"COL6" NUMBER(38,9)  NOT NULL' in sql
     assert '"COL7" BINARY' in sql
     assert '"COL8" NUMBER(38,0)' in sql
-    assert '"COL9" VARIANT NOT NULL' in sql
-    assert '"COL10" DATE NOT NULL' in sql
+    assert '"COL9" VARIANT  NOT NULL' in sql
+    assert '"COL10" DATE  NOT NULL' in sql
+
+
+def test_create_table_with_hints(snowflake_client: SnowflakeClient) -> None:
+    mod_update = deepcopy(TABLE_UPDATE[:11])
+    # mock hints
+    snowflake_client.config.create_indexes = True
+    snowflake_client.active_hints = SUPPORTED_HINTS
+
+    mod_update[0]["primary_key"] = True
+    mod_update[5]["primary_key"] = True
+
+    mod_update[0]["sort"] = True
+
+    # unique constraints are always single columns
+    mod_update[1]["unique"] = True
+    mod_update[7]["unique"] = True
+
+    mod_update[4]["parent_key"] = True
+
+    sql = ";".join(snowflake_client._get_table_update_sql("event_test_table", mod_update, False))
+
+    assert sql.strip().startswith("CREATE TABLE")
+    assert "EVENT_TEST_TABLE" in sql
+    assert '"COL1" NUMBER(19,0)  NOT NULL' in sql
+    assert '"COL2" FLOAT UNIQUE NOT NULL' in sql
+    assert '"COL3" BOOLEAN  NOT NULL' in sql
+    assert '"COL4" TIMESTAMP_TZ  NOT NULL' in sql
+    assert '"COL5" VARCHAR' in sql
+    assert '"COL6" NUMBER(38,9)  NOT NULL' in sql
+    assert '"COL7" BINARY' in sql
+    assert '"COL8" NUMBER(38,0) UNIQUE' in sql
+    assert '"COL9" VARIANT  NOT NULL' in sql
+    assert '"COL10" DATE  NOT NULL' in sql
+
+    # PRIMARY KEY constraint
+    assert 'CONSTRAINT "PK_EVENT_TEST_TABLE_' in sql
+    assert 'PRIMARY KEY ("COL1", "COL6")' in sql
+
+    # generate alter
+    mod_update = deepcopy(TABLE_UPDATE[11:])
+    mod_update[0]["primary_key"] = True
+    mod_update[1]["unique"] = True
+
+    sql = ";".join(snowflake_client._get_table_update_sql("event_test_table", mod_update, True))
+    # PK constraint ignored for alter
+    assert "PRIMARY KEY" not in sql
+    assert '"COL2_NULL" FLOAT UNIQUE' in sql
 
 
 def test_alter_table(snowflake_client: SnowflakeClient) -> None:
@@ -56,15 +137,15 @@ def test_alter_table(snowflake_client: SnowflakeClient) -> None:
     assert sql.count("ALTER TABLE") == 1
     assert sql.count("ADD COLUMN") == 1
     assert '"EVENT_TEST_TABLE"' in sql
-    assert '"COL1" NUMBER(19,0) NOT NULL' in sql
-    assert '"COL2" FLOAT NOT NULL' in sql
-    assert '"COL3" BOOLEAN NOT NULL' in sql
-    assert '"COL4" TIMESTAMP_TZ NOT NULL' in sql
+    assert '"COL1" NUMBER(19,0)  NOT NULL' in sql
+    assert '"COL2" FLOAT  NOT NULL' in sql
+    assert '"COL3" BOOLEAN  NOT NULL' in sql
+    assert '"COL4" TIMESTAMP_TZ  NOT NULL' in sql
     assert '"COL5" VARCHAR' in sql
-    assert '"COL6" NUMBER(38,9) NOT NULL' in sql
+    assert '"COL6" NUMBER(38,9)  NOT NULL' in sql
     assert '"COL7" BINARY' in sql
     assert '"COL8" NUMBER(38,0)' in sql
-    assert '"COL9" VARIANT NOT NULL' in sql
+    assert '"COL9" VARIANT  NOT NULL' in sql
     assert '"COL10" DATE' in sql
 
     mod_table = deepcopy(TABLE_UPDATE)
@@ -72,7 +153,32 @@ def test_alter_table(snowflake_client: SnowflakeClient) -> None:
     sql = snowflake_client._get_table_update_sql("event_test_table", mod_table, True)[0]
 
     assert '"COL1"' not in sql
-    assert '"COL2" FLOAT NOT NULL' in sql
+    assert '"COL2" FLOAT  NOT NULL' in sql
+
+
+def test_create_table_case_sensitive(cs_client: SnowflakeClient) -> None:
+    # did we switch to case sensitive
+    assert cs_client.capabilities.generates_case_sensitive_identifiers() is True
+    # check dataset names
+    assert cs_client.sql_client.dataset_name.startswith("Test")
+    with cs_client.with_staging_dataset():
+        assert cs_client.sql_client.dataset_name.endswith("staginG")
+    assert cs_client.sql_client.staging_dataset_name.endswith("staginG")
+    # check tables
+    cs_client.schema.update_table(
+        utils.new_table("event_test_table", columns=deepcopy(TABLE_UPDATE))
+    )
+    sql = cs_client._get_table_update_sql(
+        "Event_test_tablE",
+        list(cs_client.schema.get_table_columns("Event_test_tablE").values()),
+        False,
+    )[0]
+    sqlfluff.parse(sql, dialect="snowflake")
+    # everything capitalized
+    assert cs_client.sql_client.fully_qualified_dataset_name(escape=False)[0] == "T"  # Test
+    # every line starts with "Col"
+    for line in sql.split("\n")[1:]:
+        assert line.startswith('"Col')
 
 
 def test_create_table_with_partition_and_cluster(snowflake_client: SnowflakeClient) -> None:
