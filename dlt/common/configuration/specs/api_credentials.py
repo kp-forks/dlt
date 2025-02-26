@@ -1,22 +1,21 @@
 from typing import ClassVar, List, Union, Optional
 
-from dlt.common.typing import TSecretValue
+from dlt.common.typing import TSecretStrValue
 from dlt.common.configuration.specs.base_configuration import CredentialsConfiguration, configspec
 
 
 @configspec
 class OAuth2Credentials(CredentialsConfiguration):
-    client_id: str
-    client_secret: TSecretValue
-    refresh_token: Optional[TSecretValue]
+    client_id: str = None
+    client_secret: TSecretStrValue = None
+    refresh_token: Optional[TSecretStrValue] = None
     scopes: Optional[List[str]] = None
 
-    token: Optional[TSecretValue] = None
+    token: Optional[TSecretStrValue] = None
     """Access token"""
 
     # add refresh_token when generating config samples
     __config_gen_annotations__: ClassVar[List[str]] = ["refresh_token"]
-
 
     def auth(self, scopes: Union[str, List[str]] = None, redirect_url: str = None) -> None:
         """Authorizes the client using the available credentials
@@ -44,4 +43,3 @@ class OAuth2Credentials(CredentialsConfiguration):
                     self.scopes += [scopes]
             elif scopes:
                 self.scopes = list(set(self.scopes + scopes))
-

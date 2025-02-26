@@ -3,30 +3,31 @@ title: Airtable
 description: dlt verified source for Airtable
 keywords: [airtable api, airtable verified source, airtable]
 ---
+import Header from './_source-info-header.md';
 
 # Airtable
 
-Airtable is a cloud-based platform that merges spreadsheet and database functionalities for easy
+<Header/>
+
+[Airtable](https://www.airtable.com/) is a cloud-based platform that merges spreadsheet and database functionalities for easy
 data management and collaboration.
 
 This Airtable `dlt` verified source and
 [pipeline example](https://github.com/dlt-hub/verified-sources/blob/master/sources/airtable_pipeline.py)
-loads data using “Airtable API” to the destination of your choice.
+loads data using the “Airtable API” to the destination of your choice.
 
 Sources and resources that can be loaded using this verified source are:
 
 | Name              | Description                                |
 | ----------------- |--------------------------------------------|
 | airtable_source   | Retrieves tables from an Airtable base     |
-| airtable_resource | Retrives data from a single Airtable table |
+| airtable_resource | Retrieves data from a single Airtable table |
 
-## Setup Guide
+## Setup guide
 
 ### Grab Airtable personal access tokens
 
-
-
-1. Click your account icon top-right.
+1. Click your account icon in the top-right.
 1. Choose "Developer Hub" from the dropdown.
 1. Select "Personal access token" on the left, then "Create new token".
 1. Name it appropriately.
@@ -41,7 +42,7 @@ Sources and resources that can be loaded using this verified source are:
 
 Upon logging into Airtable and accessing your base or table, you'll notice a URL in your browser's address bar resembling:
 
-```bash
+```sh
 https://airtable.com/appve10kl227BIT4GV/tblOUnZVLFWbemTP1/viw3qtF76bRQC3wKx/rec9khXgeTotgCQ62?blocks=hide
 ```
 
@@ -63,7 +64,7 @@ To get started with your data pipeline, follow these steps:
 
 1. Enter the following command:
 
-   ```bash
+   ```sh
    dlt init airtable duckdb
    ```
 
@@ -78,8 +79,7 @@ To get started with your data pipeline, follow these steps:
 1. After running this command, a new directory will be created with the necessary files and
    configuration settings to get started.
 
-For more information, read the
-[Walkthrough: Add a verified source.](../../walkthroughs/add-a-verified-source)
+For more information, read the guide on [how to add a verified source.](../../walkthroughs/add-a-verified-source).
 
 ### Add credentials
 
@@ -90,48 +90,50 @@ For more information, read the
 
       ```toml
       [sources.airtable]
-      access_token = "Please set me up!" # please set me up!
+      access_token = "Please set me up!" # Please set me up!
       ```
 
 1. Finally, enter credentials for your chosen destination as per the [docs](../destinations/).
 
-1. Next you need to configure ".dlt/config.toml", which looks like:
+1. Next, you need to configure ".dlt/config.toml", which looks like:
 
    ```toml
    [sources.airtable]
-   base_id = "Please set me up!"       # The id of the base.
+   base_id = "Please set me up!"       # The ID of the base.
    table_names = ["Table1","Table2"]   # A list of table IDs or table names to load.
    ```
 
    > Optionally, you can also input "base_id" and "table_names" in the script, as in the pipeline
    > example.
 
+For more information, read the [General Usage: Credentials.](../../general-usage/credentials)
+
 ## Run the pipeline
 
 1. Before running the pipeline, ensure that you have installed all the necessary dependencies by
    running the command:
 
-   ```bash
+   ```sh
    pip install -r requirements.txt
    ```
 
 1. You're now ready to run the pipeline! To get started, run the following command:
 
-   ```bash
-   python3 airtable_pipeline.py
+   ```sh
+   python airtable_pipeline.py
    ```
 
 1. Once the pipeline has finished running, you can verify that everything loaded correctly by using
    the following command:
 
-   ```bash
+   ```sh
    dlt pipeline <pipeline_name> show
    ```
 
    For example, the `pipeline_name` for the above pipeline example is `airtable`, you
    may also use any custom name instead.
 
-For more information, read the [Walkthrough: Run a pipeline](../../walkthroughs/run-a-pipeline).
+For more information, read the guide on [how to run a pipeline](../../walkthroughs/run-a-pipeline).
 
 ## Sources and resources
 
@@ -140,15 +142,16 @@ For more information, read the [Walkthrough: Run a pipeline](../../walkthroughs/
 
 ### Source `airtable_source`
 
-This function retrieves tables from given Airtable base.
+This function retrieves tables from a given Airtable base.
 
-```python
+```py
 @dlt.source
 def airtable_source(
     base_id: str = dlt.config.value,
     table_names: Optional[List[str]] = None,
     access_token: str = dlt.secrets.value,
 ) -> Iterable[DltResource]:
+   ...
 ```
 
 `base_id`: The base's unique identifier.
@@ -162,26 +165,30 @@ tables in the schema are loaded.
 
 This function retrieves data from a single Airtable table.
 
-```python
+```py
+import pyairtable
+
 def airtable_resource(
     api: pyairtable.Api,
     base_id: str,
     table: Dict[str, Any],
 ) -> DltResource:
+   ...
 ```
 
 `table`: Airtable metadata, excluding actual records.
 
 ## Customization
 
+
+
 ### Create your own pipeline
 
-If you wish to create your own pipelines, you can leverage source and resource methods from this
-verified source.
+If you wish to create your own pipelines, you can leverage source and resource methods from this verified source.
 
 1. Configure the pipeline by specifying the pipeline name, destination, and dataset as follows:
 
-   ```python
+   ```py
    pipeline = dlt.pipeline(
         pipeline_name="airtable",  # Use a custom name if desired
         destination="duckdb",      # Choose the appropriate destination (e.g., duckdb, redshift, post)
@@ -191,24 +198,24 @@ verified source.
 
 1. To load the entire base:
 
-   ```python
-   base_id = "Please set me up!"     # The id of the base.
+   ```py
+   base_id = "Please set me up!"     # The ID of the base.
 
-   airtables = airtable_source(base_id=base_id))
-   load_info = pipeline.run(load_data, write_disposition="replace")
+   airtables = airtable_source(base_id=base_id)
+   load_info = pipeline.run(airtables, write_disposition="replace")
    ```
 
 1. To load selected tables from a base table:
 
-   ```python
-   base_id = "Please set me up!"     # The id of the base.
-   table_names = ["Table1","Table2"] # A list of table IDs or table names to load.
+   ```py
+   base_id = "Please set me up!"     # The ID of the base.
+   table_names = ["Table1", "Table2"] # A list of table IDs or table names to load.
 
    airtables = airtable_source(
       base_id = base_id,
       table_names = table_names
    )
-   load_info = pipeline.run(airtables, write_deposition = "replace")
+   load_info = pipeline.run(airtables, write_disposition = "replace")
    ```
 
    > You have the option to use table names or table IDs in the code above, in place of "Table1" and
@@ -216,15 +223,15 @@ verified source.
 
 1. To load data and apply hints to a specific column:
 
-   ```python
-   base_id = "Please set me up!"       # The id of the base.
-   table_names = ["Table1","Table2"]   # A list of table IDs or table names to load.
+   ```py
+   base_id = "Please set me up!"       # The ID of the base.
+   table_names = ["Table1", "Table2"]   # A list of table IDs or table names to load.
    resource_name = "Please set me up!" # The table name we want to apply hints.
    field_name = "Please set me up!"    # The table field name for which we want to apply hints.
 
    airtables = airtable_source(
         base_id="Please set me up!",
-        table_names=["Table1","Table2"],
+        table_names=["Table1", "Table2"],
    )
 
    airtables.resources[resource_name].apply_hints(
@@ -234,3 +241,6 @@ verified source.
    load_info = pipeline.run(airtables, write_disposition="replace")
    print(load_info)
    ```
+
+<!--@@@DLT_TUBA airtable-->
+

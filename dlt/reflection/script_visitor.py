@@ -1,16 +1,14 @@
 import inspect
 import ast
-import astunparse
-from ast import NodeVisitor
+from ast import NodeVisitor, unparse
 from typing import Any, Dict, List
-from dlt.common.reflection.utils import find_outer_func_def
 
+from dlt.common.reflection.utils import find_outer_func_def
 
 import dlt.reflection.names as n
 
 
 class PipelineScriptVisitor(NodeVisitor):
-
     def __init__(self, source: str):
         self.source = source
         self.source_lines: List[str] = ast._splitlines_no_ff(source)  # type: ignore
@@ -69,22 +67,26 @@ class PipelineScriptVisitor(NodeVisitor):
             for deco in node.decorator_list:
                 # decorators can be function calls, attributes or names
                 if isinstance(deco, (ast.Name, ast.Attribute)):
-                    alias_name = astunparse.unparse(deco).strip()
+                    alias_name = ast.unparse(deco).strip()
                 elif isinstance(deco, ast.Call):
-                    alias_name = astunparse.unparse(deco.func).strip()
+                    alias_name = ast.unparse(deco.func).strip()
                 else:
-                    raise ValueError(self.source_segment(deco), type(deco), "Unknown decorator form")
+                    raise ValueError(
+                        self.source_segment(deco), type(deco), "Unknown decorator form"
+                    )
                 fn = self.func_aliases.get(alias_name)
                 if fn == n.SOURCE:
                     self.known_sources[str(node.name)] = node
                 elif fn == n.RESOURCE:
+                    self.known_resources[str(node.name)] = node
+                elif fn == n.TRANSFORMER:
                     self.known_resources[str(node.name)] = node
         super().generic_visit(node)
 
     def visit_Call(self, node: ast.Call) -> Any:
         if self._curr_pass == 2:
             # check if this is a call to any of known functions
-            alias_name = astunparse.unparse(node.func).strip()
+            alias_name = ast.unparse(node.func).strip()
             fn = self.func_aliases.get(alias_name)
             if not fn:
                 # try a fallback to "run" function that may be called on pipeline or source
@@ -96,7 +98,9 @@ class PipelineScriptVisitor(NodeVisitor):
                 sig = n.SIGNATURES[fn]
                 try:
                     # bind the signature where the argument values are the corresponding ast nodes
-                    bound_args = sig.bind(*node.args, **{str(kwd.arg):kwd.value for kwd in node.keywords})
+                    bound_args = sig.bind(
+                        *node.args, **{str(kwd.arg): kwd.value for kwd in node.keywords}
+                    )
                     bound_args.apply_defaults()
                     # print(f"ALIAS: {alias_name} of {self.func_aliases.get(alias_name)} with {bound_args}")
                     fun_calls = self.known_calls.setdefault(fn, [])

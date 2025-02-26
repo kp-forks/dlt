@@ -1,4 +1,28 @@
-from typing import Any, AnyStr, List, Sequence, Optional, Iterable
+from typing import Any, AnyStr, Dict, List, Sequence, Optional, Type
+from dlt.common.typing import TypedDict
+
+
+class ExceptionTrace(TypedDict, total=False):
+    """Exception trace. NOTE: we intend to change it with an extended line by line trace with code snippets"""
+
+    message: str
+    exception_type: str
+    docstring: str
+    stack_trace: List[str]
+    is_terminal: bool
+    """Says if exception is terminal if happened to a job during load step"""
+    exception_attrs: Dict[str, Any]
+    """Public attributes of an exception deriving from DltException (not starting with _)"""
+    load_id: str
+    """Load id if found in exception attributes"""
+    pipeline_name: str
+    """Pipeline name if found in exception attributes or in the active pipeline (Container)"""
+    source_name: str
+    """Source name if found in exception attributes or in Container"""
+    resource_name: str
+    """Resource name if found in exception attributes"""
+    job_id: str
+    """Job id if found in exception attributes"""
 
 
 class DltException(Exception):
@@ -6,10 +30,22 @@ class DltException(Exception):
         """Enables exceptions with parametrized constructor to be pickled"""
         return type(self).__new__, (type(self), *self.args), self.__dict__
 
+    def attrs(self) -> Dict[str, Any]:
+        """Returns "public" attributes of the DltException"""
+        return {
+            k: v
+            for k, v in vars(self).items()
+            if not k.startswith("_") and not callable(v) and not hasattr(self.__class__, k)
+        }
+
+
 class UnsupportedProcessStartMethodException(DltException):
     def __init__(self, method: str) -> None:
         self.method = method
-        super().__init__(f"Process pool supports only fork start method, {method} not supported. Switch the pool type to threading")
+        super().__init__(
+            f"Process pool supports only fork start method, {method} not supported. Switch the pool"
+            " type to threading"
+        )
 
 
 class CannotInstallDependencies(DltException):
@@ -20,7 +56,10 @@ class CannotInstallDependencies(DltException):
             str_output = output.decode("utf-8")
         else:
             str_output = output
-        super().__init__(f"Cannot install dependencies {', '.join(dependencies)} with {interpreter} and pip:\n{str_output}\n")
+        super().__init__(
+            f"Cannot install dependencies {', '.join(dependencies)} with {interpreter} and"
+            f" pip:\n{str_output}\n"
+        )
 
 
 class VenvNotFound(DltException):
@@ -49,17 +88,32 @@ class TerminalValueError(ValueError, TerminalException):
 
 class SignalReceivedException(KeyboardInterrupt, TerminalException):
     """Raises when signal comes. Derives from `BaseException` to not be caught in regular exception handlers."""
+
     def __init__(self, signal_code: int) -> None:
         self.signal_code = signal_code
         super().__init__(f"Signal {signal_code} received")
 
 
 class DictValidationException(DltException):
-    def __init__(self, msg: str, path: str, field: str = None, value: Any = None) -> None:
+    def __init__(
+        self,
+        msg: str,
+        path: str,
+        expected_type: Type[Any] = None,
+        field: str = None,
+        value: Any = None,
+        nested_exceptions: List["DictValidationException"] = None,
+    ) -> None:
         self.path = path
+        self.expected_type = expected_type
         self.field = field
         self.value = value
+        self.nested_exceptions = nested_exceptions
+        self.msg = msg
         super().__init__(msg)
+
+    def __str__(self) -> str:
+        return f"In path {self.path}: " + self.msg
 
 
 class ArgumentsOverloadException(DltException):
@@ -87,94 +141,30 @@ You must install additional dependencies to run {self.caller}. If you use pip yo
         return msg
 
     def _to_pip_install(self) -> str:
-        return "\n".join([f"pip install \"{d}\"" for d in self.dependencies])
+        return "\n".join([f'pip install "{d}"' for d in self.dependencies])
+
+
+class DependencyVersionException(DltException):
+    def __init__(
+        self, pkg_name: str, version_found: str, version_required: str, appendix: str = ""
+    ) -> None:
+        self.pkg_name = pkg_name
+        self.version_found = version_found
+        self.version_required = version_required
+        super().__init__(self._get_msg(appendix))
+
+    def _get_msg(self, appendix: str) -> str:
+        msg = (
+            f"Found `{self.pkg_name}=={self.version_found}`, while"
+            f" `{self.pkg_name}{self.version_required}` is required."
+        )
+        if appendix:
+            msg = msg + "\n" + appendix
+        return msg
 
 
 class SystemConfigurationException(DltException):
     pass
-
-
-class DestinationException(DltException):
-    pass
-
-
-class UnknownDestinationModule(DestinationException):
-    def __init__(self, destination_module: str) -> None:
-        self.destination_module = destination_module
-        if "." in destination_module:
-            msg = f"Destination module {destination_module} could not be found and imported"
-        else:
-            msg = f"Destination {destination_module} is not one of the standard dlt destinations"
-        super().__init__(msg)
-
-
-class InvalidDestinationReference(DestinationException):
-    def __init__(self, destination_module: Any) -> None:
-        self.destination_module = destination_module
-        msg = f"Destination {destination_module} is not a valid destination module."
-        super().__init__(msg)
-
-
-class DestinationTerminalException(DestinationException, TerminalException):
-    pass
-
-
-class DestinationUndefinedEntity(DestinationTerminalException):
-    pass
-
-
-class DestinationTransientException(DestinationException, TransientException):
-    pass
-
-
-class DestinationLoadingViaStagingNotSupported(DestinationTerminalException):
-    def __init__(self, destination: str) -> None:
-        self.destination = destination
-        super().__init__(f"Destination {destination} does not support loading via staging.")
-
-class DestinationLoadingWithoutStagingNotSupported(DestinationTerminalException):
-    def __init__(self, destination: str) -> None:
-        self.destination = destination
-        super().__init__(f"Destination {destination} does not support loading without staging.")
-
-class DestinationNoStagingMode(DestinationTerminalException):
-    def __init__(self, destination: str) -> None:
-        self.destination = destination
-        super().__init__(f"Destination {destination} cannot be used as a staging")
-
-
-class DestinationIncompatibleLoaderFileFormatException(DestinationTerminalException):
-    def __init__(self, destination: str, staging: str, file_format: str, supported_formats: Iterable[str]) -> None:
-        self.destination = destination
-        self.staging = staging
-        self.file_format = file_format
-        self.supported_formats = supported_formats
-        supported_formats_str = ", ".join(supported_formats)
-        if self.staging:
-            if not supported_formats:
-                msg = f"Staging {staging} cannot be used with destination {destination} because they have no file formats in common."
-            else:
-                msg = f"Unsupported file format {file_format} for destination {destination} in combination with staging destination {staging}. Supported formats: {supported_formats_str}"
-        else:
-            msg = f"Unsupported file format {file_format} destination {destination}. Supported formats: {supported_formats_str}. Check the staging option in the dlt.pipeline for additional formats."
-        super().__init__(msg)
-
-
-class IdentifierTooLongException(DestinationTerminalException):
-    def __init__(self, destination_name: str, identifier_type: str, identifier_name: str, max_identifier_length: int) -> None:
-        self.destination_name = destination_name
-        self.identifier_type = identifier_type
-        self.identifier_name = identifier_name
-        self.max_identifier_length = max_identifier_length
-        super().__init__(f"The length of {identifier_type} {identifier_name} exceeds {max_identifier_length} allowed for {destination_name}")
-
-
-class DestinationHasFailedJobs(DestinationTerminalException):
-    def __init__(self, destination_name: str, load_id: str, failed_jobs: List[Any]) -> None:
-        self.destination_name = destination_name
-        self.load_id = load_id
-        self.failed_jobs = failed_jobs
-        super().__init__(f"Destination {destination_name} has failed jobs in load package {load_id}")
 
 
 class PipelineException(DltException):
@@ -187,21 +177,37 @@ class PipelineException(DltException):
 class PipelineStateNotAvailable(PipelineException):
     def __init__(self, source_state_key: Optional[str] = None) -> None:
         if source_state_key:
-            msg = f"The source {source_state_key} requested the access to pipeline state but no pipeline is active right now."
+            msg = (
+                f"The source {source_state_key} requested the access to pipeline state but no"
+                " pipeline is active right now."
+            )
         else:
-            msg = "The resource you called requested the access to pipeline state but no pipeline is active right now."
-        msg += " Call dlt.pipeline(...) before you call the @dlt.source or  @dlt.resource decorated function."
+            msg = (
+                "The resource you called requested the access to pipeline state but no pipeline is"
+                " active right now."
+            )
+        msg += (
+            " Call dlt.pipeline(...) before you call the @dlt.source or  @dlt.resource decorated"
+            " function."
+        )
         self.source_state_key = source_state_key
         super().__init__(None, msg)
 
 
 class ResourceNameNotAvailable(PipelineException):
     def __init__(self) -> None:
-        super().__init__(None,
-            "A resource state was requested but no active extract pipe context was found. Resource state may be only requested from @dlt.resource decorated function or with explicit resource name.")
+        super().__init__(
+            None,
+            "A resource state was requested but no active extract pipe context was found. Resource"
+            " state may be only requested from @dlt.resource decorated function or with explicit"
+            " resource name.",
+        )
 
 
 class SourceSectionNotAvailable(PipelineException):
     def __init__(self) -> None:
-        msg = "Access to state was requested without source section active. State should be requested from within the @dlt.source and @dlt.resource decorated function."
+        msg = (
+            "Access to state was requested without source section active. State should be requested"
+            " from within the @dlt.source and @dlt.resource decorated function."
+        )
         super().__init__(None, msg)

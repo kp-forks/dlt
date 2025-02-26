@@ -2,8 +2,9 @@ import threading
 import signal
 from contextlib import contextmanager
 from threading import Event
-from typing import Any, TYPE_CHECKING, Iterator
+from typing import Any, Iterator
 
+from dlt.common import logger
 from dlt.common.exceptions import SignalReceivedException
 
 _received_signal: int = 0
@@ -11,11 +12,6 @@ exit_event = Event()
 
 
 def signal_receiver(sig: int, frame: Any) -> None:
-    if not TYPE_CHECKING:
-        from dlt.common.runtime import logger
-    else:
-        logger: Any = None
-
     global _received_signal
 
     logger.info(f"Signal {sig} received")
@@ -36,14 +32,25 @@ def raise_if_signalled() -> None:
         raise SignalReceivedException(_received_signal)
 
 
+def signal_received() -> bool:
+    """check if a signal was received"""
+    return True if _received_signal else False
+
+
 def sleep(sleep_seconds: float) -> None:
     """A signal-aware version of sleep function. Will raise SignalReceivedException if signal was received during sleep period."""
     # do not allow sleeping if signal was received
     raise_if_signalled()
     # sleep or wait for signal
+    exit_event.clear()
     exit_event.wait(sleep_seconds)
     # if signal then raise
     raise_if_signalled()
+
+
+def wake_all() -> None:
+    """Wakes all threads sleeping on event"""
+    exit_event.set()
 
 
 @contextmanager
@@ -64,5 +71,5 @@ def delayed_signals() -> Iterator[None]:
             signal.signal(signal.SIGINT, original_sigint_handler)
             signal.signal(signal.SIGTERM, original_sigterm_handler)
     else:
-        print("Running in daemon thread, signals not enabled")
+        logger.info("Running in daemon thread, signals not enabled")
         yield

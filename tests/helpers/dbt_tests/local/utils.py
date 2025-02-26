@@ -1,9 +1,8 @@
-
 import contextlib
 from typing import Iterator, NamedTuple
 
 from dlt.common.configuration.utils import add_config_to_env
-from dlt.common.destination.reference import DestinationClientDwhConfiguration
+from dlt.common.destination.client import DestinationClientDwhConfiguration
 from dlt.common.runners import Venv
 from dlt.common.typing import StrAny
 
@@ -23,10 +22,13 @@ class DBTDestinationInfo(NamedTuple):
     incremental_strategy: str
 
 
-def setup_rasa_runner(profile_name: str, dataset_name: str = None, override_values: StrAny = None) -> DBTPackageRunner:
-
+def setup_rasa_runner(
+    profile_name: str, dataset_name: str = None, override_values: StrAny = None
+) -> DBTPackageRunner:
     C = DBTRunnerConfiguration()
-    C.package_location = "https://github.com/scale-vector/rasa_semantic_schema.git"  # "/home/rudolfix/src/dbt/rasa_semantic_schema"
+    C.package_location = (  # "/home/rudolfix/src/dbt/rasa_semantic_schema"
+        "https://github.com/scale-vector/rasa_semantic_schema.git"
+    )
     C.package_repository_branch = "dlt-dbt-runner-ci-do-not-delete"
 
     # override values including the defaults above
@@ -38,10 +40,12 @@ def setup_rasa_runner(profile_name: str, dataset_name: str = None, override_valu
     runner = create_runner(
         Venv.restore_current(),
         # credentials are exported to env in setup_rasa_runner_client
-        DestinationClientDwhConfiguration(dataset_name=dataset_name or FIXTURES_DATASET_NAME),
+        DestinationClientDwhConfiguration()._bind_dataset_name(
+            dataset_name=dataset_name or FIXTURES_DATASET_NAME
+        ),
         TEST_STORAGE_ROOT,
         package_profile_name=profile_name,
-        config=C
+        config=C,
     )
     # now C is resolved
     init_test_logging(C.runtime)
@@ -49,7 +53,9 @@ def setup_rasa_runner(profile_name: str, dataset_name: str = None, override_valu
 
 
 @contextlib.contextmanager
-def setup_rasa_runner_client(destination_name: str, destination_dataset_name: str) -> Iterator[None]:
+def setup_rasa_runner_client(
+    destination_name: str, destination_dataset_name: str
+) -> Iterator[None]:
     with cm_yield_client(destination_name, FIXTURES_DATASET_NAME) as client:
         # emit environ so credentials are passed to dbt profile
         add_config_to_env(client.config, ("DLT",))

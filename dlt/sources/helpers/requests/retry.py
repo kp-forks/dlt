@@ -1,20 +1,39 @@
 from email.utils import parsedate_tz, mktime_tz
 import re
 import time
-from typing import Optional, cast, Callable, Type, Union, Sequence, Tuple, List, TYPE_CHECKING, Any, Dict
+from typing import (
+    Optional,
+    cast,
+    Callable,
+    Type,
+    Union,
+    Sequence,
+    Tuple,
+    List,
+    TYPE_CHECKING,
+    Any,
+    Dict,
+)
 from threading import local
 
 from requests import Response, HTTPError, Session as BaseSession
 from requests.exceptions import ConnectionError, Timeout, ChunkedEncodingError
 from requests.adapters import HTTPAdapter
-from tenacity import Retrying, retry_if_exception_type, stop_after_attempt, RetryCallState, retry_any, wait_exponential
+from tenacity import (
+    Retrying,
+    retry_if_exception_type,
+    stop_after_attempt,
+    RetryCallState,
+    retry_any,
+    wait_exponential,
+)
 from tenacity.retry import retry_base
 
+from dlt.common.configuration.inject import with_config
+from dlt.common.typing import TimedeltaSeconds, ConfigValue
+from dlt.common.configuration.specs import RuntimeConfiguration
 from dlt.sources.helpers.requests.session import Session, DEFAULT_TIMEOUT
 from dlt.sources.helpers.requests.typing import TRequestTimeout
-from dlt.common.typing import TimedeltaSeconds
-from dlt.common.configuration.specs import RunConfiguration
-from dlt.common.configuration import with_config
 
 
 DEFAULT_RETRY_STATUS = (429, *range(500, 600))
@@ -96,12 +115,12 @@ def _make_retry(
     backoff_factor: float,
     respect_retry_after_header: bool,
     max_delay: TimedeltaSeconds,
-)-> Retrying:
+) -> Retrying:
     retry_conds = [retry_if_status(status_codes), retry_if_exception_type(tuple(exceptions))]
     if condition is not None:
         if callable(condition):
-            retry_condition = [condition]
-        retry_conds.extend([retry_if_predicate(c) for c in retry_condition])
+            condition = [condition]
+        retry_conds.extend([retry_if_predicate(c) for c in condition])
 
     wait_cls = wait_exponential_retry_after if respect_retry_after_header else wait_exponential
     return Retrying(
@@ -134,7 +153,7 @@ class Client:
 
     The retry is triggered when either any of the predicates or the default conditions based on status code/exception are `True`.
 
-    #### Args:
+    Args:
         request_timeout: Timeout for requests in seconds. May be passed as `timedelta` or `float/int` number of seconds.
         max_connections: Max connections per host in the HTTPAdapter pool
         raise_for_status: Whether to raise exception on error status codes (using `response.raise_for_status()`)
@@ -148,20 +167,22 @@ class Client:
         respect_retry_after_header: Whether to use the `Retry-After` response header (when available) to determine the retry delay
         session_attrs: Extra attributes that will be set on the session instance, e.g. `{headers: {'Authorization': 'api-key'}}` (see `requests.sessions.Session` for possible attributes)
     """
+
     _session_attrs: Dict[str, Any]
 
-    @with_config(spec=RunConfiguration)
     def __init__(
         self,
-        request_timeout: Optional[Union[TimedeltaSeconds, Tuple[TimedeltaSeconds, TimedeltaSeconds]]] = DEFAULT_TIMEOUT,
+        request_timeout: Optional[
+            Union[TimedeltaSeconds, Tuple[TimedeltaSeconds, TimedeltaSeconds]]
+        ] = DEFAULT_TIMEOUT,
         max_connections: int = 50,
         raise_for_status: bool = True,
         status_codes: Sequence[int] = DEFAULT_RETRY_STATUS,
         exceptions: Sequence[Type[Exception]] = DEFAULT_RETRY_EXCEPTIONS,
-        request_max_attempts: int = RunConfiguration.request_max_attempts,
+        request_max_attempts: int = RuntimeConfiguration.request_max_attempts,
         retry_condition: Union[RetryPredicate, Sequence[RetryPredicate], None] = None,
-        request_backoff_factor: float = RunConfiguration.request_backoff_factor,
-        request_max_retry_delay: TimedeltaSeconds = RunConfiguration.request_max_retry_delay,
+        request_backoff_factor: float = RuntimeConfiguration.request_backoff_factor,
+        request_max_retry_delay: TimedeltaSeconds = RuntimeConfiguration.request_max_retry_delay,
         respect_retry_after_header: bool = True,
         session_attrs: Optional[Dict[str, Any]] = None,
     ) -> None:
@@ -175,7 +196,7 @@ class Client:
             condition=retry_condition,
             backoff_factor=request_backoff_factor,
             respect_retry_after_header=respect_retry_after_header,
-            max_delay=request_max_retry_delay
+            max_delay=request_max_retry_delay,
         )
         self._session_attrs = session_attrs or {}
 
@@ -198,29 +219,36 @@ class Client:
         self.options = lambda *a, **kw: self.session.options(*a, **kw)
         self.request = lambda *a, **kw: self.session.request(*a, **kw)
 
-        self._config_version: int = 0  # Incrementing marker to ensure per-thread sessions are recreated on config changes
+        self._config_version: int = (
+            0  # Incrementing marker to ensure per-thread sessions are recreated on config changes
+        )
 
-    def update_from_config(self, config: RunConfiguration) -> None:
+    @with_config(spec=RuntimeConfiguration)
+    def configure(self, config: RuntimeConfiguration = ConfigValue) -> None:
+        """Update session/retry settings via injected RunConfiguration"""
+        self.update_from_config(config)
+
+    def update_from_config(self, config: RuntimeConfiguration) -> None:
         """Update session/retry settings from RunConfiguration"""
-        self._session_kwargs['timeout'] = config.request_timeout
-        self._retry_kwargs['backoff_factor'] = config.request_backoff_factor
-        self._retry_kwargs['max_delay'] = config.request_max_retry_delay
-        self._retry_kwargs['max_attempts'] = config.request_max_attempts
+        self._session_kwargs["timeout"] = config.request_timeout
+        self._retry_kwargs["backoff_factor"] = config.request_backoff_factor
+        self._retry_kwargs["max_delay"] = config.request_max_retry_delay
+        self._retry_kwargs["max_attempts"] = config.request_max_attempts
         self._config_version += 1
 
     def _make_session(self) -> Session:
         session = Session(**self._session_kwargs)  # type: ignore[arg-type]
         for key, value in self._session_attrs.items():
             setattr(session, key, value)
-        session.mount('http://', self._adapter)
-        session.mount('https://', self._adapter)
+        session.mount("http://", self._adapter)
+        session.mount("https://", self._adapter)
         retry = _make_retry(**self._retry_kwargs)
-        session.request = retry.wraps(session.request)  # type: ignore[method-assign]
+        session.send = retry.wraps(session.send)  # type: ignore[method-assign]
         return session
 
     @property
     def session(self) -> Session:
-        session: Optional[Session] = getattr(self._local, 'session', None)
+        session: Optional[Session] = getattr(self._local, "session", None)
         version = self._config_version
         if session is not None:
             version = self._local.config_version

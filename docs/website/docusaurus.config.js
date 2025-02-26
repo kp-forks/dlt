@@ -1,16 +1,55 @@
 // @ts-check
 // Note: type annotations allow type checking and IDEs autocompletion
+const fs = require("fs")
+require('dotenv').config()
 
-const lightCodeTheme = require('prism-react-renderer/themes/dracula');
-// const lightCodeTheme = require('prism-react-renderer/themes/github');
+// const lightCodeTheme = require('prism-react-renderer/themes/dracula');
+const lightCodeTheme = require('prism-react-renderer/themes/github');
 const darkCodeTheme = require('prism-react-renderer/themes/dracula');
+
+// create versions config
+const versions = {"current": {
+  label: 'devel',
+  path: 'devel',
+  noIndex: true
+}}
+
+let knownVersions = [];
+if (fs.existsSync("versions.json")) {
+  knownVersions = JSON.parse(fs.readFileSync("versions.json"));
+}
+
+// inject master version renaming only if versions present and master included
+if (knownVersions) {
+  let latestLabel = "latest"
+  if (process.env.DOCUSAURUS_DLT_VERSION) {
+    latestLabel = `${process.env.DOCUSAURUS_DLT_VERSION} (latest)`
+  }
+
+  if (knownVersions.includes("master")) {
+    versions["master"] = {
+      label: latestLabel,
+      path: '/'
+    }
+  }
+
+  // disable indexing for all known versions
+  for (let v of knownVersions) {
+    if (v == "master") {
+      continue;
+    }
+    versions[v] = {
+      noIndex: true
+    }
+  }
+}
 
 /** @type {import('@docusaurus/types').Config} */
 const config = {
   title: 'dlt Docs',
   tagline: 'data load tool',
   url: 'https://dlthub.com',
-  baseUrl: '/docs',
+  baseUrl: process.env.DOCUSAURUS_BASE_URL || '/docs',
   onBrokenLinks: 'throw',
   onBrokenMarkdownLinks: 'throw',
   favicon: 'img/favicon.ico',
@@ -35,6 +74,7 @@ const config = {
       ({
         docs: {
           routeBasePath: '/',
+          path: 'docs_processed',
           include: ['**/*.md', '**/*.mdx'],
           exclude: [
             // '**/_*.{js,jsx,ts,tsx,md,mdx}',
@@ -43,24 +83,15 @@ const config = {
             '**/__tests__/**',
           ],
           sidebarPath: require.resolve('./sidebars.js'),
-          editUrl: 'https://github.com/dlt-hub/dlt/tree/devel/docs/website',
-          versions: {
-            current: {
-              label: 'current',
-            },
+          editUrl: (params) => {
+            return "https://github.com/dlt-hub/dlt/tree/devel/docs/website/docs/" + params.docPath;
           },
-          lastVersion: 'current',
+          versions: versions,
           showLastUpdateAuthor: true,
           showLastUpdateTime: true,
         },
-        blog: {
-          showReadingTime: true
-        },
         theme: {
           customCss: require.resolve('./src/css/custom.css'),
-        },
-        gtag: {
-          trackingID: ['G-7F1SE12JLR', 'G-PRHSCL1CMK'],
         },
       }),
     ],
@@ -78,55 +109,38 @@ const config = {
         },
         items: [
           {
-            type: 'doc',
-            docId: 'intro',
-            position: 'left',
-            label: 'Docs',
+            type: 'docsVersionDropdown',
           },
-          { to: 'blog', label: 'Blog', position: 'left' },
+          { to: 'https://dlthub.com/blog', label: 'Blog', position: 'left' },
           {
-            href: 'https://join.slack.com/t/dlthub-community/shared_invite/zt-1slox199h-HAE7EQoXmstkP_bTqal65g',
-            label: '.',
+            href: 'https://dlthub.com/community',
+            label: 'Join community',
             position: 'right',
             className: 'slack-navbar',
           },
           {
             href: 'https://github.com/dlt-hub/dlt',
-            label: '.',
+            label: 'Star us',
             position: 'right',
             className: 'github-navbar',
             "aria-label": "GitHub repository",
           },
         ],
       },
-      announcementBar: {
-        content:
-          '⭐️ If you like data load tool (dlt), give it a star on <a target="_blank" rel="noopener noreferrer" href="https://github.com/dlt-hub/dlt">GitHub</a>! ⭐️',
+      docs: {
+        sidebar: {
+          hideable: true,
+        },
       },
       footer: {
         style: 'dark',
         links: [
           {
-            title: 'Docs',
-            items: [
-              {
-                label: 'Docs',
-                to: '/intro',
-                className: 'footer-link'
-              },
-              {
-                label: 'Blog',
-                to: '/blog',
-                className: 'footer-link'
-              }
-            ],
-          },
-          {
             title: 'Community',
             items: [
               {
                 label: 'Slack',
-                href: 'https://join.slack.com/t/dlthub-community/shared_invite/zt-1slox199h-HAE7EQoXmstkP_bTqal65g',
+                href: 'https://dlthub.com/community',
                 className: 'footer-link'
               },
               {
@@ -170,7 +184,7 @@ const config = {
         indexName: 'dlthub',
 
         // Optional: see doc section below
-        contextualSearch: true,
+        contextualSearch: false,
       },
       colorMode: {
         defaultMode:'dark',
@@ -184,6 +198,10 @@ const config = {
       src: 'https://dlt-static.s3.eu-central-1.amazonaws.com/dhelp.js',
       async: true,
       defer: true,
+    },
+    {
+      src: 'https://dlthub.com/js/tm.js',
+      async: true,
     },
   ],
 };

@@ -3,7 +3,8 @@ from typing import Any, Optional, Type
 
 from hexbytes import HexBytes
 
-from dlt.common import pendulum, Wei
+from dlt.common.pendulum import pendulum
+from dlt.common.wei import Wei
 from dlt.common.data_types import TDataType
 from dlt.common.time import parse_iso_like_datetime
 
@@ -31,6 +32,25 @@ def is_iso_timestamp(t: Type[Any], v: Any) -> Optional[TDataType]:
         dtv = parse_iso_like_datetime(v)
         if isinstance(dtv, datetime.datetime):
             return "timestamp"
+    except Exception:
+        pass
+    return None
+
+
+def is_iso_date(t: Type[Any], v: Any) -> Optional[TDataType]:
+    # only strings can be converted
+    if not issubclass(t, str):
+        return None
+    if not v:
+        return None
+    # don't cast iso timestamps as dates
+    if is_iso_timestamp(t, v):
+        return None
+    # strict autodetection of iso timestamps
+    try:
+        dtv = parse_iso_like_datetime(v)
+        if isinstance(dtv, datetime.date):
+            return "date"
     except Exception:
         pass
     return None

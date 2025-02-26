@@ -1,13 +1,16 @@
 import io
 import os
 import contextlib
+import sys
+import multiprocessing
+import platform
 
-from dlt.common.typing import StrStr, StrAny, Literal, List
+from dlt.common.runtime.typing import TExecutionContext, TVersion, TExecInfoNames
+from dlt.common.typing import StrStr, StrAny, List
 from dlt.common.utils import filter_env_vars
-from dlt.version import __version__
+from dlt.version import __version__, DLT_PKG_NAME
 
 
-TExecInfoNames = Literal["kubernetes", "docker", "codespaces", "github_actions", "airflow", "notebook", "colab","aws_lambda","gcp_cloud_function"]
 # if one of these environment variables is set, we assume to be running in CI env
 CI_ENVIRONMENT_TELL = [
     "bamboo.buildKey",
@@ -49,6 +52,8 @@ def exec_info_names() -> List[TExecInfoNames]:
         names.append("aws_lambda")
     if is_gcp_cloud_function():
         names.append("gcp_cloud_function")
+    if is_streamlit():
+        names.append("streamlit")
     return names
 
 
@@ -58,6 +63,10 @@ def is_codespaces() -> bool:
 
 def is_github_actions() -> bool:
     return "GITHUB_ACTIONS" in os.environ
+
+
+def is_streamlit() -> bool:
+    return "STREAMLIT_SERVER_PORT" in os.environ
 
 
 def is_notebook() -> bool:
@@ -100,7 +109,7 @@ def is_running_in_airflow_task() -> bool:
             from airflow.operators.python import get_current_context
 
             context = get_current_context()
-            return context is not None and 'ti' in context
+            return context is not None and "ti" in context
     except Exception:
         return False
 
@@ -164,3 +173,45 @@ def is_aws_lambda() -> bool:
 def is_gcp_cloud_function() -> bool:
     "Return True if the process is running in the serverless platform GCP Cloud Functions"
     return os.environ.get("FUNCTION_NAME") is not None
+
+
+def get_plus_version() -> TVersion:
+    "Gets dlt+ library version"
+    try:
+        from dlt_plus.version import __version__, PKG_NAME
+
+        return TVersion(name=PKG_NAME, version=__version__)
+    except Exception:
+        return None
+
+
+def run_context_name() -> str:
+    try:
+        from dlt.common.configuration.container import Container
+        from dlt.common.configuration.specs.pluggable_run_context import PluggableRunContext
+
+        container = Container()
+        if PluggableRunContext in container:
+            return container[PluggableRunContext].context.name
+
+    except Exception:
+        pass
+
+    return "dlt"
+
+
+def get_execution_context() -> TExecutionContext:
+    "Get execution context information"
+    context = TExecutionContext(
+        ci_run=in_continuous_integration(),
+        python=sys.version.split(" ")[0],
+        cpu=multiprocessing.cpu_count(),
+        exec_info=exec_info_names(),
+        os=TVersion(name=platform.system(), version=platform.release()),
+        library=TVersion(name=DLT_PKG_NAME, version=__version__),
+        run_context=run_context_name(),
+    )
+    if plus_version := get_plus_version():
+        context["plus"] = plus_version
+
+    return context

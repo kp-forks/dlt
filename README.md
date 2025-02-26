@@ -13,7 +13,7 @@ Be it a Google Colab notebook, AWS Lambda function, an Airflow DAG, your local l
 </h3>
 
 <div align="center">
-  <a target="_blank" href="https://join.slack.com/t/dlthub-community/shared_invite/zt-1slox199h-HAE7EQoXmstkP_bTqal65g" style="background:none">
+  <a target="_blank" href="https://dlthub.com/community" style="background:none">
     <img src="https://img.shields.io/badge/slack-join-dlt.svg?labelColor=191937&color=6F6FF7&logo=slack" style="width: 260px;"  />
   </a>
 </div>
@@ -24,15 +24,21 @@ Be it a Google Colab notebook, AWS Lambda function, an Airflow DAG, your local l
   <a target="_blank" href="https://pypi.org/project/dlt/" style="background:none">
     <img src="https://img.shields.io/pypi/pyversions/dlt?labelColor=191937&color=6F6FF7">
   </a>
+  <a target="_blank" href="https://pypi.org/project/dlt/" style="background:none">
+    <img src="https://img.shields.io/pypi/dm/dlt?labelColor=191937&color=6F6FF7">
+  </a>
 </div>
 
 ## Installation
 
-dlt supports Python 3.8+.
+dlt supports Python 3.9+. Python 3.13 is supported but considered experimental at this time as not all of dlts extras have python 3.13. support. We additionally maintain a [forked version of pendulum](https://github.com/dlt-hub/pendulum) for 3.13 until there is a release for 3.13.
 
-```bash
+```sh
 pip install dlt
 ```
+
+More options: [Install via Conda or Pixi](https://dlthub.com/docs/reference/installation#install-dlt-via-pixi-and-conda)
+
 
 ## Quick Start
 
@@ -41,6 +47,7 @@ Load chess game data from chess.com API and save it in DuckDB:
 ```python
 import dlt
 from dlt.sources.helpers import requests
+
 # Create a dlt pipeline that will load
 # chess player data to the DuckDB destination
 pipeline = dlt.pipeline(
@@ -48,12 +55,14 @@ pipeline = dlt.pipeline(
     destination='duckdb',
     dataset_name='player_data'
 )
+
 # Grab some player data from Chess.com API
 data = []
 for player in ['magnuscarlsen', 'rpragchess']:
     response = requests.get(f'https://api.chess.com/pub/player/{player}')
     response.raise_for_status()
     data.append(response.json())
+
 # Extract, normalize, and load the data
 pipeline.run(data, table_name='player')
 ```
@@ -86,11 +95,23 @@ For detailed usage and configuration, please refer to the [official documentatio
 
 You can find examples for various use cases in the [examples](docs/examples) folder.
 
+## Adding as dependency
+
+`dlt` follows the semantic versioning with the [`MAJOR.MINOR.PATCH`](https://peps.python.org/pep-0440/#semantic-versioning) pattern.
+
+* `major` means breaking changes and removed deprecations
+* `minor` new features, sometimes automatic migrations
+* `patch` bug fixes
+
+We suggest that you allow only `patch` level updates automatically:
+* Using the [Compatible Release Specifier](https://packaging.python.org/en/latest/specifications/version-specifiers/#compatible-release). For example **dlt~=1.0** allows only versions **>=1.0** and less than **<1.1**
+* Poetry [caret requirements](https://python-poetry.org/docs/dependency-specification/). For example **^1.0** allows only versions **>=1.0** to **<1.0**
+
 ## Get Involved
 
 The dlt project is quickly growing, and we're excited to have you join our community! Here's how you can get involved:
 
-- **Connect with the Community**: Join other dlt users and contributors on our [Slack](https://join.slack.com/t/dlthub-community/shared_invite/zt-1slox199h-HAE7EQoXmstkP_bTqal65g)
+- **Connect with the Community**: Join other dlt users and contributors on our [Slack](https://dlthub.com/community)
 - **Report issues and suggest features**: Please use the [GitHub Issues](https://github.com/dlt-hub/dlt/issues) to report bugs or suggest new features. Before creating a new issue, make sure to search the tracker for possible duplicates and add a comment if you find one.
 - **Track progress of our work and our plans**: Please check out our [public Github project](https://github.com/orgs/dlt-hub/projects/9)
 - **Contribute Verified Sources**: Contribute your custom sources to the [dlt-hub/verified-sources](https://github.com/dlt-hub/verified-sources) to help other folks in handling their data tasks.
@@ -99,4 +120,4 @@ The dlt project is quickly growing, and we're excited to have you join our commu
 
 ## License
 
-DLT is released under the [Apache 2.0 License](LICENSE.txt).
+`dlt` is released under the [Apache 2.0 License](LICENSE.txt).

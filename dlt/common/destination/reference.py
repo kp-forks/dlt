@@ -1,377 +1,397 @@
-from abc import ABC, abstractmethod, abstractproperty
-from importlib import import_module
-from types import TracebackType, ModuleType
-from typing import ClassVar, Final, Optional, NamedTuple, Literal, Sequence, Iterable, Type, Protocol, Union, TYPE_CHECKING, cast, List, ContextManager, Dict, Any
-from contextlib import contextmanager
-import datetime  # noqa: 251
+import re
+from abc import ABC, abstractmethod
+
+from typing import (
+    Callable,
+    ClassVar,
+    List,
+    Optional,
+    Type,
+    Union,
+    Dict,
+    Any,
+    TypeVar,
+    Generic,
+)
+from typing_extensions import TypeAlias
+import inspect
 
 from dlt.common import logger
-from dlt.common.exceptions import IdentifierTooLongException, InvalidDestinationReference, UnknownDestinationModule
-from dlt.common.schema import Schema, TTableSchema, TSchemaTables
-from dlt.common.schema.typing import TWriteDisposition
-from dlt.common.schema.exceptions import InvalidDatasetName
-from dlt.common.configuration import configspec
-from dlt.common.configuration.specs import BaseConfiguration, CredentialsConfiguration
-from dlt.common.configuration.accessors import config
+from dlt.common.normalizers.naming import NamingConvention
+from dlt.common.configuration import resolve_configuration, known_sections
 from dlt.common.destination.capabilities import DestinationCapabilitiesContext
-from dlt.common.schema.utils import is_complete_column
-from dlt.common.storages import FileStorage
-from dlt.common.storages.load_storage import ParsedLoadJobFileName
-from dlt.common.utils import get_module_name
-from dlt.common.configuration.specs import GcpCredentials, AwsCredentialsWithoutDefaults
-
-TLoaderReplaceStrategy = Literal["truncate-and-insert", "insert-from-staging", "staging-optimized"]
-
-
-class StorageSchemaInfo(NamedTuple):
-    version_hash: str
-    schema_name: str
-    version: int
-    engine_version: str
-    inserted_at: datetime.datetime
-    schema: str
-
-class StateInfo(NamedTuple):
-    version: int
-    engine_version: int
-    pipeline_name: str
-    state: str
-    created_at: datetime.datetime
-    dlt_load_id: str = None
-
-@configspec
-class DestinationClientConfiguration(BaseConfiguration):
-    destination_name: str = None  # which destination to load data to
-    credentials: Optional[CredentialsConfiguration]
-
-    def fingerprint(self) -> str:
-        """Returns a destination fingerprint which is a hash of selected configuration fields. ie. host in case of connection string"""
-        return ""
-
-    def __str__(self) -> str:
-        """Return displayable destination location"""
-        return str(self.credentials)
-
-    if TYPE_CHECKING:
-        def __init__(self, destination_name: str = None, credentials: Optional[CredentialsConfiguration] = None
-) -> None:
-            ...
+from dlt.common.destination.exceptions import (
+    InvalidDestinationReference,
+    UnknownDestinationModule,
+)
+from dlt.common.destination.client import DestinationClientConfiguration, JobClientBase
+from dlt.common.runtime.run_context import get_plugin_modules
+from dlt.common.schema.schema import Schema
+from dlt.common.typing import is_subclass
+from dlt.common.utils import get_full_callable_name
+from dlt.common.reflection.ref import object_from_ref
 
 
-@configspec
-class DestinationClientDwhConfiguration(DestinationClientConfiguration):
-    """Configuration of a destination that supports datasets/schemas"""
+TDestinationConfig = TypeVar("TDestinationConfig", bound="DestinationClientConfiguration")
+TDestinationClient = TypeVar("TDestinationClient", bound="JobClientBase")
+AnyDestination: TypeAlias = "Destination[DestinationClientConfiguration, JobClientBase]"
+AnyDestination_CO: TypeAlias = "Destination[Any, Any]"
 
-    dataset_name: Final[str] = None
-    """dataset name in the destination to load data to, for schemas that are not default schema, it is used as dataset prefix"""
-    default_schema_name: Optional[str] = None
-    """name of default schema to be used to name effective dataset to load data to"""
-    replace_strategy: TLoaderReplaceStrategy = "truncate-and-insert"
-    """How to handle replace disposition for this destination, can be classic or staging"""
 
-    def normalize_dataset_name(self, schema: Schema) -> str:
-        """Builds full db dataset (schema) name out of configured dataset name and schema name: {dataset_name}_{schema.name}. The resulting name is normalized.
+# TODO: type Destination properly
+TDestinationReferenceArg = Union[str, AnyDestination_CO, Callable[..., AnyDestination_CO], None]
 
-           If default schema name is None or equals schema.name, the schema suffix is skipped.
-        """
-        if not schema.name:
-            raise ValueError("schema_name is None or empty")
 
-        # if default schema is None then suffix is not added
-        if self.default_schema_name is not None and schema.name != self.default_schema_name:
-            # also normalize schema name. schema name is Python identifier and here convention may be different
-            return schema.naming.normalize_table_identifier((self.dataset_name or "") + "_" + schema.name)
-
-        return self.dataset_name if not self.dataset_name else schema.naming.normalize_table_identifier(self.dataset_name)
-
-    if TYPE_CHECKING:
-        def __init__(
-            self,
-            destination_name: str = None,
-            credentials: Optional[CredentialsConfiguration] = None,
-            dataset_name: str = None,
-            default_schema_name: Optional[str] = None,
-        ) -> None:
-            ...
-
-@configspec
-class DestinationClientStagingConfiguration(DestinationClientDwhConfiguration):
-    """Configuration of a staging destination, able to store files with desired `layout` at `bucket_url`.
-
-       Also supports datasets and can act as standalone destination.
+class Destination(ABC, Generic[TDestinationConfig, TDestinationClient]):
+    """A destination factory that can be partially pre-configured
+    with credentials and other config params.
     """
-    as_staging: bool = False
-    bucket_url: str = None
-    # layout of the destination files
-    layout: str = "{table_name}/{load_id}.{file_id}.{ext}"
 
-    if TYPE_CHECKING:
-        def __init__(
-            self,
-            destination_name: str = None,
-            credentials: Union[AwsCredentialsWithoutDefaults, GcpCredentials] = None,
-            dataset_name: str = None,
-            default_schema_name: Optional[str] = None,
-            as_staging: bool = False,
-            bucket_url: str = None,
-            layout: str =  None
-        ) -> None:
-            ...
+    config_params: Dict[str, Any]
+    """Explicit config params, overriding any injected or default values."""
+    caps_params: Dict[str, Any]
+    """Explicit capabilities params, overriding any default values for this destination"""
 
-@configspec
-class DestinationClientDwhWithStagingConfiguration(DestinationClientDwhConfiguration):
-    """Configuration of a destination that can take data from staging destination"""
-    staging_config: Optional[DestinationClientStagingConfiguration] = None
-    """configuration of the staging, if present, injected at runtime"""
-    if TYPE_CHECKING:
-        def __init__(
-            self,
-            destination_name: str = None,
-            credentials: Optional[CredentialsConfiguration] = None,
-            dataset_name: str = None,
-            default_schema_name: Optional[str] = None,
-            staging_config: Optional[DestinationClientStagingConfiguration] = None
-        ) -> None:
-            ...
+    def __init__(self, **kwargs: Any) -> None:
+        # Create initial unresolved destination config
+        # Argument defaults are filtered out here because we only want arguments passed explicitly
+        # to supersede config from the environment or pipeline args
+        # __orig_base__ tells where the __init__ of interest is, in case class is derived
+        sig = inspect.signature(getattr(self.__class__, "__orig_base__", self.__class__).__init__)
+        params = sig.parameters
 
+        # get available args
+        spec = self.spec
+        spec_fields = spec.get_resolvable_fields()
+        caps_fields = DestinationCapabilitiesContext.get_resolvable_fields()
 
-TLoadJobState = Literal["running", "failed", "retry", "completed"]
+        # remove default kwargs
+        kwargs = {k: v for k, v in kwargs.items() if k not in params or v != params[k].default}
 
+        # warn on unknown params
+        for k in list(kwargs):
+            if k not in spec_fields and k not in caps_fields:
+                logger.warning(
+                    f"When initializing destination factory of type {self.destination_type},"
+                    f" argument {k} is not a valid field in {spec.__name__} or destination"
+                    " capabilities"
+                )
+                kwargs.pop(k)
 
-class LoadJob:
-    """Represents a job that loads a single file
+        self.config_params = {k: v for k, v in kwargs.items() if k in spec_fields}
+        self.caps_params = {k: v for k, v in kwargs.items() if k in caps_fields}
 
-        Each job starts in "running" state and ends in one of terminal states: "retry", "failed" or "completed".
-        Each job is uniquely identified by a file name. The file is guaranteed to exist in "running" state. In terminal state, the file may not be present.
-        In "running" state, the loader component periodically gets the state via `status()` method. When terminal state is reached, load job is discarded and not called again.
-        `exception` method is called to get error information in "failed" and "retry" states.
-
-        The `__init__` method is responsible to put the Job in "running" state. It may raise `LoadClientTerminalException` and `LoadClientTransientException` to
-        immediately transition job into "failed" or "retry" state respectively.
-    """
-    def __init__(self, file_name: str) -> None:
-        """
-        File name is also a job id (or job id is deterministically derived) so it must be globally unique
-        """
-        # ensure file name
-        assert file_name == FileStorage.get_file_name_from_file_path(file_name)
-        self._file_name = file_name
-        self._parsed_file_name = ParsedLoadJobFileName.parse(file_name)
-
+    @property
     @abstractmethod
-    def state(self) -> TLoadJobState:
-        """Returns current state. Should poll external resource if necessary."""
-        pass
-
-    def file_name(self) -> str:
-        """A name of the job file"""
-        return self._file_name
-
-    def job_id(self) -> str:
-        """The job id that is derived from the file name"""
-        return self._parsed_file_name.job_id()
-
-    def job_file_info(self) -> ParsedLoadJobFileName:
-        return self._parsed_file_name
-
-    @abstractmethod
-    def exception(self) -> str:
-        """The exception associated with failed or retry states"""
-        pass
-
-
-class NewLoadJob(LoadJob):
-    """Adds a trait that allows to save new job file"""
-
-    @abstractmethod
-    def new_file_path(self) -> str:
-        """Path to a newly created temporary job file. If empty, no followup job should be created"""
-        pass
-
-
-class FollowupJob:
-    """Adds a trait that allows to create a followup job"""
-    def create_followup_jobs(self, next_state: str) -> List[NewLoadJob]:
-        return []
-
-
-class JobClientBase(ABC):
-
-    capabilities: ClassVar[DestinationCapabilitiesContext] = None
-
-    def __init__(self, schema: Schema, config: DestinationClientConfiguration) -> None:
-        self.schema = schema
-        self.config = config
-
-    @abstractmethod
-    def initialize_storage(self, truncate_tables: Iterable[str] = None) -> None:
-        """Prepares storage to be used ie. creates database schema or file system folder. Truncates requested tables.
-        """
-        pass
-
-    @abstractmethod
-    def is_storage_initialized(self) -> bool:
-        """Returns if storage is ready to be read/written."""
-        pass
-
-    @abstractmethod
-    def drop_storage(self) -> None:
-        """Brings storage back into not initialized state. Typically data in storage is destroyed."""
-        pass
-
-    def update_stored_schema(self, only_tables: Iterable[str] = None, expected_update: TSchemaTables = None) -> Optional[TSchemaTables]:
-        """Updates storage to the current schema.
-
-        Implementations should not assume that `expected_update` is the exact difference between destination state and the self.schema. This is only the case if
-        destination has single writer and no other processes modify the schema.
-
-        Args:
-            only_tables (Sequence[str], optional): Updates only listed tables. Defaults to None.
-            expected_update (TSchemaTables, optional): Update that is expected to be applied to the destination
-        Returns:
-            Optional[TSchemaTables]: Returns an update that was applied at the destination.
-        """
-        self._verify_schema()
-        return expected_update
-
-    @abstractmethod
-    def start_file_load(self, table: TTableSchema, file_path: str, load_id: str) -> LoadJob:
-        """Creates and starts a load job for a particular `table` with content in `file_path`"""
-        pass
-
-    @abstractmethod
-    def restore_file_load(self, file_path: str) -> LoadJob:
-        """Finds and restores already started loading job identified by `file_path` if destination supports it."""
-        pass
-
-    def get_truncate_destination_table_dispositions(self) -> List[TWriteDisposition]:
-        # in the base job, all replace strategies are treated the same, see filesystem for example
-        return ["replace"]
-
-    def create_table_chain_completed_followup_jobs(self, table_chain: Sequence[TTableSchema]) -> List[NewLoadJob]:
-        """Creates a list of followup jobs that should be executed after a table chain is completed"""
-        return []
-
-    @abstractmethod
-    def complete_load(self, load_id: str) -> None:
-        """Marks the load package with `load_id` as completed in the destination. Before such commit is done, the data with `load_id` is invalid."""
-        pass
-
-    @abstractmethod
-    def __enter__(self) -> "JobClientBase":
-        pass
-
-    @abstractmethod
-    def __exit__(self, exc_type: Type[BaseException], exc_val: BaseException, exc_tb: TracebackType) -> None:
-        pass
-
-    def _verify_schema(self) -> None:
-        """Verifies and cleans up a schema before loading
-
-        * Checks all table and column name lengths against destination capabilities and raises on too long identifiers
-        * Removes and warns on (unbound) incomplete columns
-        """
-
-        for table in self.schema.data_tables():
-            table_name = table["name"]
-            if len(table_name) > self.capabilities.max_identifier_length:
-                raise IdentifierTooLongException(self.config.destination_name, "table", table_name, self.capabilities.max_identifier_length)
-            for column_name, column in dict(table["columns"]).items():
-                if len(column_name) > self.capabilities.max_column_identifier_length:
-                    raise IdentifierTooLongException(
-                        self.config.destination_name,
-                        "column",
-                        f"{table_name}.{column_name}",
-                        self.capabilities.max_column_identifier_length
-                    )
-                if not is_complete_column(column):
-                    logger.warning(f"A column {column_name} in table {table_name} in schema {self.schema.name} is incomplete. It was not bound to the data during normalizations stage and its data type is unknown. Did you add this column manually in code ie. as a merge key?")
-
-
-class WithStateSync(ABC):
-
-    @abstractmethod
-    def get_stored_schema(self) -> Optional[StorageSchemaInfo]:
-        """Retrieves newest schema from destination storage"""
-        pass
-
-    @abstractmethod
-    def get_stored_schema_by_hash(self, version_hash: str) -> StorageSchemaInfo:
-        pass
-
-    @abstractmethod
-    def get_stored_state(self, pipeline_name: str) -> Optional[StateInfo]:
-        """Loads compressed state from destination storage"""
-        pass
-
-
-class WithStagingDataset(ABC):
-    """Adds capability to use staging dataset and request it from the loader"""
-
-    @abstractmethod
-    def get_stage_dispositions(self) -> List[TWriteDisposition]:
-        """Returns a list of write dispositions that require staging dataset"""
-        return []
-
-    @abstractmethod
-    def with_staging_dataset(self)-> ContextManager["JobClientBase"]:
-        """Executes job client methods on staging dataset"""
-        return self  # type: ignore
-
-
-TDestinationReferenceArg = Union["DestinationReference", ModuleType, None, str]
-
-
-class DestinationReference(Protocol):
-    __name__: str
-    """Name of the destination"""
-
-    def capabilities(self) -> DestinationCapabilitiesContext:
-        """Destination capabilities ie. supported loader file formats, identifier name lengths, naming conventions, escape function etc."""
-
-    def client(self, schema: Schema, initial_config: DestinationClientConfiguration = config.value) -> "JobClientBase":
-        """A job client responsible for starting and resuming load jobs"""
-
-    def spec(self) -> Type[DestinationClientConfiguration]:
+    def spec(self) -> Type[TDestinationConfig]:
         """A spec of destination configuration that also contains destination credentials"""
+        ...
 
-    @staticmethod
-    def from_name(destination: TDestinationReferenceArg) -> "DestinationReference":
-        if destination is None:
-            return None
+    def capabilities(
+        self, config: Optional[TDestinationConfig] = None, naming: Optional[NamingConvention] = None
+    ) -> DestinationCapabilitiesContext:
+        """Destination capabilities ie. supported loader file formats, identifier name lengths, naming conventions, escape function etc.
+        Explicit caps arguments passed to the factory init and stored in `caps_params` are applied.
 
-        # if destination is a str, get destination reference by dynamically importing module
-        if isinstance(destination, str):
+        If `config` is provided, it is used to adjust the capabilities, otherwise the explicit config composed just of `config_params` passed
+          to factory init is applied
+        If `naming` is provided, the case sensitivity and case folding are adjusted.
+        """
+        caps = self._raw_capabilities()
+        caps.update(self.caps_params)
+        # get explicit config if final config not passed
+        if config is None:
+            # create mock credentials to avoid credentials being resolved
+            init_config = self.spec()
+            init_config.update(self.config_params)
+            credentials = self.spec.credentials_type(init_config)()
+            credentials.__is_resolved__ = True
+            config = self.spec(credentials=credentials)
             try:
-                if "." in destination:
-                    # this is full module name
-                    destination_ref = cast(DestinationReference, import_module(destination))
-                else:
-                    # from known location
-                    destination_ref = cast(DestinationReference, import_module(f"dlt.destinations.{destination}"))
-            except ImportError:
-                if "." in destination:
-                    raise UnknownDestinationModule(destination)
-                else:
-                    # allow local external module imported without dot
-                    try:
-                        destination_ref = cast(DestinationReference, import_module(destination))
-                    except ImportError:
-                        raise UnknownDestinationModule(destination)
+                config = self.configuration(config, accept_partial=True)
+            except Exception:
+                # in rare cases partial may fail ie. when invalid native value is present
+                # in that case we fallback to "empty" config
+                pass
+        return self.adjust_capabilities(caps, config, naming)
+
+    @abstractmethod
+    def _raw_capabilities(self) -> DestinationCapabilitiesContext:
+        """Returns raw capabilities, before being adjusted with naming convention and config"""
+        ...
+
+    @property
+    def destination_name(self) -> str:
+        """The destination name will either be explicitly set while creating the destination or will be taken from the type"""
+        return self.config_params.get("destination_name") or self.to_name(self.destination_type)
+
+    @property
+    def configured_name(self) -> str:
+        """Configured destination name, None by default"""
+        return self.config_params.get("destination_name")  # type: ignore[no-any-return]
+
+    @property
+    def destination_type(self) -> str:
+        full_path = self.__class__.__module__ + "." + self.__class__.__qualname__
+        return DestinationReference.normalize_type(full_path)
+
+    @property
+    def destination_description(self) -> str:
+        return f"{self.destination_name}({self.destination_type})"
+
+    @property
+    @abstractmethod
+    def client_class(self) -> Type[TDestinationClient]:
+        """A job client class responsible for starting and resuming load jobs"""
+        ...
+
+    def configuration(
+        self, initial_config: TDestinationConfig, accept_partial: bool = False
+    ) -> TDestinationConfig:
+        """Get a fully resolved destination config from the initial config"""
+
+        config = resolve_configuration(
+            initial_config or self.spec(),
+            sections=(known_sections.DESTINATION, self.destination_name),
+            # Already populated values will supersede resolved env config
+            explicit_value=self.config_params,
+            accept_partial=accept_partial,
+        )
+        return config
+
+    def client(
+        self, schema: Schema, initial_config: TDestinationConfig = None
+    ) -> TDestinationClient:
+        """Returns a configured instance of the destination's job client"""
+        config = self.configuration(initial_config)
+        caps = self.capabilities(config, schema.naming)
+        # adjust naming for caps that dynamically set max length (ie. sql alchemy)
+        if caps.max_identifier_length or caps.max_column_identifier_length:
+            schema.naming.max_length = min(
+                caps.max_identifier_length or caps.max_column_identifier_length,
+                caps.max_column_identifier_length or caps.max_identifier_length,
+            )
+        return self.client_class(schema, config, caps)
+
+    @classmethod
+    def adjust_capabilities(
+        cls,
+        caps: DestinationCapabilitiesContext,
+        config: TDestinationConfig,
+        naming: Optional[NamingConvention],
+    ) -> DestinationCapabilitiesContext:
+        """Adjust the capabilities to match the case sensitivity as requested by naming convention."""
+        # if naming not provided, skip the adjustment
+        if not naming or not naming.is_case_sensitive:
+            # all destinations are configured to be case insensitive so there's nothing to adjust
+            return caps
+        if not caps.has_case_sensitive_identifiers:
+            if caps.casefold_identifier is str:
+                logger.info(
+                    f"Naming convention {naming.name()} is case sensitive but the destination does"
+                    " not support case sensitive identifiers. Nevertheless identifier casing will"
+                    " be preserved in the destination schema."
+                )
+            else:
+                logger.warn(
+                    f"Naming convention {naming.name()} is case sensitive but the destination does"
+                    " not support case sensitive identifiers. Destination will case fold all the"
+                    f" identifiers with {caps.casefold_identifier}"
+                )
         else:
-            destination_ref = cast(DestinationReference, destination)
-
-        # make sure the reference is correct
-        try:
-            c = destination_ref.spec()
-            c.credentials
-        except Exception:
-            raise InvalidDestinationReference(destination)
-
-        return destination_ref
+            # adjust case folding to store casefold identifiers in the schema
+            if caps.casefold_identifier is not str:
+                caps.casefold_identifier = str
+                logger.info(
+                    f"Enabling case sensitive identifiers for naming convention {naming.name()}"
+                )
+        return caps
 
     @staticmethod
-    def to_name(destination: TDestinationReferenceArg) -> str:
-        if isinstance(destination, ModuleType):
-            return get_module_name(destination)
-        return destination.split(".")[-1]  # type: ignore
+    def to_name(ref: TDestinationReferenceArg) -> str:
+        if ref is None:
+            raise InvalidDestinationReference([])
+        if isinstance(ref, str):
+            return ref.rsplit(".", 1)[-1]
+        if callable(ref):
+            ref = ref()
+        return ref.destination_name
+
+    @classmethod
+    def register(cls) -> None:
+        """Registers this factory class under  __module__.__name__ of a Destination factory"""
+        DestinationReference.register(cls, get_full_callable_name(cls))
+
+    @classmethod
+    def from_reference(
+        cls,
+        ref: TDestinationReferenceArg,
+        credentials: Optional[Any] = None,
+        destination_name: Optional[str] = None,
+        environment: Optional[str] = None,
+        **kwargs: Any,
+    ) -> Optional[AnyDestination]:
+        """Instantiate destination from a string reference or one of supported forms.
+        This methods obtains a destination factory and then instantiates it passing
+        the arguments after `ref`
+        """
+        # if we only get a name but no ref, we assume that the name is the destination_type
+        if ref is None and destination_name is not None:
+            ref = destination_name
+        if ref is None:
+            return None
+        # evaluate callable returning Destination
+        if callable(ref):
+            ref = ref()
+        if isinstance(ref, Destination):
+            if credentials or destination_name or environment or kwargs:
+                logger.warning(
+                    "Cannot override credentials, destination_name, environment or kwargs when"
+                    " passing a Destination instance, these values will be ignored."
+                )
+            return ref
+
+        return DestinationReference.from_reference(
+            ref, credentials, destination_name, environment, **kwargs
+        )
+
+
+class DestinationReference:
+    """A registry of destination factories with a set of method for finding and instantiating"""
+
+    DESTINATIONS: ClassVar[Dict[str, Type[AnyDestination]]] = {}
+    """A registry of all the destination factories"""
+
+    @staticmethod
+    def normalize_type(destination_type: str) -> str:
+        """Normalizes destination type string into a canonical form. Assumes that type names without dots correspond to built in destinations."""
+        if "." not in destination_type:
+            destination_type = "dlt.destinations." + destination_type
+        # the next two lines shorten the dlt internal destination paths to dlt.destinations.<destination_type>
+        pattern = r"\.destinations\.impl\.[a-zA-Z_][.a-zA-Z0-9_]*\."
+        replacement = ".destinations."
+        destination_type = re.sub(pattern, replacement, destination_type)
+        return destination_type
+
+    @classmethod
+    def register(cls, factory: Type[AnyDestination_CO], ref: str) -> None:
+        """Registers `factory` class under `ref`. `ref`"""
+        ref = cls.normalize_type(ref)
+        if ref in cls.DESTINATIONS:
+            logger.debug(
+                f"A destination with ref {ref} is already registered and will be overwritten"
+            )
+        cls.DESTINATIONS[ref] = factory
+
+    @staticmethod
+    def to_fully_qualified_refs(ref: str) -> List[str]:
+        """Converts ref into fully qualified form, return one or more alternatives for shorthand notations.
+        Run context is injected if needed. Following formats are recognized
+        - name
+        NOTE: the last component of destination type serves as destination name if not explicitly specified
+        """
+        ref_split = ref.split(".")
+        ref_parts = len(ref_split)
+        if ref_parts < 2:
+            # context name is needed
+            refs = []
+            for ref_prefix in get_plugin_modules():
+                if ref_prefix:
+                    ref_prefix = f"{ref_prefix}.{known_sections.DESTINATIONS}"
+                else:
+                    ref_prefix = f"{known_sections.DESTINATIONS}"
+                refs.append(f"{ref_prefix}.{ref}")
+            return refs
+
+        return []
+
+    @classmethod
+    def find(
+        cls,
+        ref: str,
+        /,
+        raise_exec_errors: bool = False,
+        import_missing_modules: bool = False,
+    ) -> Union[Type[AnyDestination], Callable[..., AnyDestination]]:
+        """Finds or auto-imports destination factory that can be further called in order to instantiate it
+        The ref can be a destination name or import path pointing to a destination class (e.g. `dlt.destinations.postgres`)
+        You can control auto-import behavior:
+         - `raise_exec_errors` - will re-raise code execution errors in imported modules
+         - `import_missing_modules` - will ignore missing dependencies during import by substituting
+         them with dummy modules. this should be only used to manipulate local dev environment
+
+         NOTE: find returns a factory class or a callable that will create factory instance (for custom destinations)
+         use `ensure_factory` to extract factory class from callable
+         TODO: synthesize a __call__ on custom destination (`destination`) factory type so this distinction is not
+         needed
+        """
+        refs = cls.to_fully_qualified_refs(ref)
+        factory: Type[AnyDestination] = None
+        if ref not in refs:
+            refs = [ref] + refs
+
+        for ref_ in refs:
+            if factory := cls.DESTINATIONS.get(ref_):
+                return factory
+
+        def _typechecker(t_: Any) -> Any:
+            # or destination type
+            if is_subclass(t_, Destination):
+                return t_
+            # or callable that has factory and will return it
+            assert callable(t_) and hasattr(t_, "_factory")
+            return t_
+
+        import_traces = []
+
+        # no reference found, try to import default module
+        if not factory:
+            for possible_type in refs:
+                if "." not in possible_type:
+                    continue
+                factory, trace = object_from_ref(
+                    possible_type,
+                    _typechecker,
+                    raise_exec_errors=raise_exec_errors,
+                    import_missing_modules=import_missing_modules,
+                )
+                if factory:
+                    return factory
+                import_traces.append(trace)
+
+        raise UnknownDestinationModule(ref, refs, import_traces)
+
+    @classmethod
+    def ensure_factory(
+        cls, ref_factory: Union[Type[AnyDestination], Callable[..., AnyDestination]]
+    ) -> Type[AnyDestination]:
+        """Extract factory type from a callable creating factory instance."""
+        if is_subclass(ref_factory, Destination):
+            return ref_factory  # type: ignore[return-value]
+        return ref_factory._factory  # type: ignore[no-any-return,union-attr]
+
+    @classmethod
+    def from_reference(
+        cls,
+        ref: str,
+        credentials: Optional[Any] = None,
+        destination_name: Optional[str] = None,
+        environment: Optional[str] = None,
+        **kwargs: Any,
+    ) -> Optional[AnyDestination]:
+        """Instantiate destination from str reference.
+        The ref can be a destination name or import path pointing to a destination class (e.g. `dlt.destinations.postgres`)
+        This methods obtains a destination factory and then instantiates it passing the arguments after `ref`
+        """
+        if not isinstance(ref, str):
+            raise InvalidDestinationReference(ref)
+
+        factory = cls.find(ref)
+
+        if credentials:
+            kwargs["credentials"] = credentials
+        if destination_name:
+            kwargs["destination_name"] = destination_name
+        if environment:
+            kwargs["environment"] = environment
+        return factory(**kwargs)

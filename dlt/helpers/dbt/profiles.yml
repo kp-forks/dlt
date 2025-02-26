@@ -83,6 +83,7 @@ duckdb:
       extensions:
         - httpfs
         - parquet
+        - iceberg
       # TODO: emit the config of duck db
 
 motherduck:
@@ -142,3 +143,65 @@ athena:
       database: "{{ env_var('DLT__AWS_DATA_CATALOG') }}"
       # aws_profile_name: "{{ env_var('DLT__CREDENTIALS__PROFILE_NAME', '') }}"
       work_group: "{{ env_var('DLT__ATHENA_WORK_GROUP', '') }}"
+
+
+mssql:
+  target: analytics
+  outputs:
+    analytics:
+      type: sqlserver
+      driver: "{{ env_var('DLT__CREDENTIALS__DRIVER') }}"
+      server: "{{ env_var('DLT__CREDENTIALS__HOST') }}"
+      port: "{{ env_var('DLT__CREDENTIALS__PORT') | as_number }}"
+      database: "{{ env_var('DLT__CREDENTIALS__DATABASE') }}"
+      schema: "{{ var('destination_dataset_name', var('source_dataset_name')) }}"
+      user: "{{ env_var('DLT__CREDENTIALS__USERNAME') }}"
+      password: "{{ env_var('DLT__CREDENTIALS__PASSWORD') }}"
+      login_timeout: "{{ env_var('DLT__CREDENTIALS__CONNECT_TIMEOUT', '0')  | as_number }}"
+      encrypt: "{{ (env_var('DLT__CREDENTIALS__QUERY__ENCRYPT', 'No') == 'yes')  | as_bool }}"
+      trust_cert: "{{ (env_var('DLT__CREDENTIALS__QUERY__TRUSTSERVERCERTIFICATE', 'yes') == 'yes')  | as_bool }}"
+
+synapse:
+  target: analytics
+  outputs:
+    analytics:
+      type: synapse
+      driver: "{{ env_var('DLT__CREDENTIALS__DRIVER') }}"
+      server: "{{ env_var('DLT__CREDENTIALS__HOST') }}"
+      port: "{{ env_var('DLT__CREDENTIALS__PORT') | as_number }}"
+      database: "{{ env_var('DLT__CREDENTIALS__DATABASE') }}"
+      schema: "{{ var('destination_dataset_name', var('source_dataset_name')) }}"
+      user: "{{ env_var('DLT__CREDENTIALS__USERNAME') }}"
+      password: "{{ env_var('DLT__CREDENTIALS__PASSWORD') }}"
+      authentication: sql
+      login_timeout: "{{ env_var('DLT__CREDENTIALS__CONNECT_TIMEOUT', '0')  | as_number }}"
+      encrypt: "{{ (env_var('DLT__CREDENTIALS__QUERY__ENCRYPT', 'No') == 'yes')  | as_bool }}"
+      trust_cert: "{{ (env_var('DLT__CREDENTIALS__QUERY__TRUSTSERVERCERTIFICATE', 'yes') == 'yes')  | as_bool }}"
+
+
+databricks:
+  target: analytics
+  outputs:
+    analytics:
+      type: databricks
+      catalog: "{{ env_var('DLT__CREDENTIALS__CATALOG') }}"
+      schema: "{{ var('destination_dataset_name', var('source_dataset_name')) }}"
+      host: "{{ env_var('DLT__CREDENTIALS__SERVER_HOSTNAME') }}"
+      http_path: "{{ env_var('DLT__CREDENTIALS__HTTP_PATH') }}"
+      token: "{{ env_var('DLT__CREDENTIALS__ACCESS_TOKEN') }}"
+      threads: 4
+
+
+clickhouse:
+  target: analytics
+  outputs:
+    analytics:
+      type: clickhouse
+      schema: "{{ env_var('DLT__CREDENTIALS__DATABASE') }}"
+      host: "{{ env_var('DLT__CREDENTIALS__HOST') }}"
+      user: "{{ env_var('DLT__CREDENTIALS__USERNAME') }}"
+      password: "{{ env_var('DLT__CREDENTIALS__PASSWORD') }}"
+      port: "{{ env_var('DLT__CREDENTIALS__PORT', 8443) | as_number }}"
+      connect_timeout: "{{ env_var('DLT__CREDENTIALS__CONNECT_TIMEOUT') | as_number }}"
+      send_receive_timeout: "{{ env_var('DLT__CREDENTIALS__SEND_RECEIVE_TIMEOUT') | as_number }}"
+      secure: "{{ env_var('DLT__CREDENTIALS__SECURE') == '1' | as_bool }}"

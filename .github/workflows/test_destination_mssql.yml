@@ -1,5 +1,5 @@
 
-name: test MS SQL
+name: dest | mssql
 
 on:
   pull_request:
@@ -7,34 +7,38 @@ on:
       - master
       - devel
   workflow_dispatch:
+  schedule:
+    - cron:  '0 2 * * *'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 env:
-  DESTINATION__MSSQL__CREDENTIALS: mssql://dlt_root@dlt-ci-mssql.database.windows.net:1433/dlt_ci
-  DESTINATION__MSSQL__CREDENTIALS__PASSWORD: ${{ secrets.MSSQL_PASSWORD }}
 
-  RUNTIME__SENTRY_DSN: https://6f6f7b6f8e0f458a89be4187603b55fe@o1061158.ingest.sentry.io/4504819859914752
+  DLT_SECRETS_TOML: ${{ secrets.DLT_SECRETS_TOML }}
+
+  # RUNTIME__SENTRY_DSN: https://6f6f7b6f8e0f458a89be4187603b55fe@o1061158.ingest.sentry.io/4504819859914752
   RUNTIME__LOG_LEVEL: ERROR
+  RUNTIME__DLTHUB_TELEMETRY_ENDPOINT: ${{ secrets.RUNTIME__DLTHUB_TELEMETRY_ENDPOINT }}
 
   ACTIVE_DESTINATIONS: "[\"mssql\"]"
   ALL_FILESYSTEM_DRIVERS: "[\"memory\"]"
 
 jobs:
   get_docs_changes:
+    name: docs changes
     uses: ./.github/workflows/get_docs_changes.yml
-    if: ${{ !github.event.pull_request.head.repo.fork }}
+    if: ${{ !github.event.pull_request.head.repo.fork || contains(github.event.pull_request.labels.*.name, 'ci from fork')}}
 
   run_loader:
-    name: Tests MS SQL loader
+    name: dest | mssql tests
     needs: get_docs_changes
     if: needs.get_docs_changes.outputs.changes_outside_docs == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        os: ["ubuntu-latest"]
     defaults:
       run:
         shell: bash
-    runs-on: ${{ matrix.os }}
+    runs-on: "ubuntu-latest"
 
     steps:
 
@@ -56,6 +60,7 @@ jobs:
           virtualenvs-create: true
           virtualenvs-in-project: true
           installer-parallel: true
+          version: 1.8.5
 
       - name: Load cached venv
         id: cached-poetry-dependencies
@@ -65,25 +70,11 @@ jobs:
           key: venv-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('**/poetry.lock') }}-gcp
 
       - name: Install dependencies
-        run: poetry install --no-interaction -E mssql -E s3 -E gs -E az
+        run: poetry install --no-interaction -E mssql -E s3 -E gs -E az -E parquet --with sentry-sdk --with pipeline && poetry run pip install ibis-framework[duckdb,postgres,bigquery,snowflake,mssql,clickhouse]
 
-      - run: |
-          poetry run pytest tests/load --ignore tests/load/pipeline/test_dbt_helper.py
-        if: runner.os != 'Windows'
-        name: Run tests Linux/MAC
-      - run: |
-          poetry run pytest tests/load --ignore tests/load/pipeline/test_dbt_helper.py
-        if: runner.os == 'Windows'
-        name: Run tests Windows
-        shell: cmd
+      - name: create secrets.toml
+        run: pwd && echo "$DLT_SECRETS_TOML" > tests/.dlt/secrets.toml
 
-  matrix_job_required_check:
-    name: MS SQL loader tests
-    needs: run_loader
-    runs-on: ubuntu-latest
-    if: always()
-    steps:
-      - name: Check matrix job results
-        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
-        run: |
-          echo "One or more matrix job tests failed or were cancelled. You may need to re-run them." && exit 1
+      # always run full suite, also on branches
+      - run: poetry run pytest tests/load --ignore tests/load/sources
+        name: Run tests Linux

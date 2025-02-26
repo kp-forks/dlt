@@ -4,10 +4,14 @@
 # Production
 /build
 
+# preprocessed docs
+/docs_processed
+
 # Generated files
 .docusaurus
 .cache-loader
 docs/api_reference
+jaffle_shop
 
 # Misc
 .DS_Store
@@ -19,3 +23,9 @@ docs/api_reference
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# ignore all versions, there are generated dynamically
+versions.json
+versioned_docs
+versioned_sidebars
+.dlt-repo

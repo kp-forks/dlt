@@ -1,16 +1,21 @@
 import binascii
 import base64
+import dataclasses
 import datetime  # noqa: I251
 from collections.abc import Mapping as C_Mapping, Sequence as C_Sequence
-from typing import Any, Type, Literal, Union, cast
+from typing import Any, Type, Union
 from enum import Enum
 
-from dlt.common import pendulum, json, Decimal, Wei
-from dlt.common.json import custom_pua_remove
+from dlt.common.json import custom_pua_remove, json
 from dlt.common.json._simplejson import custom_encode as json_custom_encode
-from dlt.common.arithmetics import InvalidOperation
+from dlt.common.wei import Wei
+from dlt.common.arithmetics import InvalidOperation, Decimal
 from dlt.common.data_types.typing import TDataType
-from dlt.common.time import ensure_pendulum_datetime, parse_iso_like_datetime, ensure_pendulum_date, ensure_pendulum_time
+from dlt.common.time import (
+    ensure_pendulum_datetime,
+    ensure_pendulum_date,
+    ensure_pendulum_time,
+)
 from dlt.common.utils import map_nested_in_place, str2bool
 
 
@@ -26,7 +31,7 @@ def py_type_to_sc_type(t: Type[Any]) -> TDataType:
     if t is int:
         return "bigint"
     if issubclass(t, (dict, list)):
-        return "complex"
+        return "json"
 
     # those are special types that will not be present in json loaded dict
     # wei is subclass of decimal and must be checked first
@@ -50,8 +55,8 @@ def py_type_to_sc_type(t: Type[Any]) -> TDataType:
         return "bigint"
     if issubclass(t, bytes):
         return "binary"
-    if issubclass(t, (C_Mapping, C_Sequence)):
-        return "complex"
+    if dataclasses.is_dataclass(t) or issubclass(t, (C_Mapping, C_Sequence)):
+        return "json"
     # Enum is coerced to str or int respectively
     if issubclass(t, Enum):
         if issubclass(t, int):
@@ -63,7 +68,7 @@ def py_type_to_sc_type(t: Type[Any]) -> TDataType:
     raise TypeError(t)
 
 
-def complex_to_str(value: Any) -> str:
+def json_to_str(value: Any) -> str:
     return json.dumps(map_nested_in_place(custom_pua_remove, value))
 
 
@@ -76,33 +81,41 @@ def coerce_from_date_types(
     if to_type == "text":
         return v.isoformat()
     if to_type == "bigint":
-        return v.int_timestamp  # type: ignore
+        return v.int_timestamp
     if to_type == "double":
-        return v.timestamp()  # type: ignore
+        return v.timestamp()
     if to_type == "date":
         return ensure_pendulum_date(v)
     if to_type == "time":
-        return v.time()  # type: ignore[no-any-return]
+        return v.time()
     raise TypeError(f"Cannot convert timestamp to {to_type}")
 
 
 def coerce_value(to_type: TDataType, from_type: TDataType, value: Any) -> Any:
     if to_type == from_type:
-        if to_type == "complex":
-            # complex types need custom encoding to be removed
+        if to_type == "json":
+            # nested types need custom encoding to be removed
             return map_nested_in_place(custom_pua_remove, value)
         # Make sure we use enum value instead of the object itself
         # This check is faster than `isinstance(value, Enum)` for non-enum types
-        if hasattr(value, 'value'):
+        if hasattr(value, "value"):
             if to_type == "text":
                 return str(value.value)
             elif to_type == "bigint":
                 return int(value.value)
         return value
 
+    if to_type == "json":
+        # try to coerce from text
+        if from_type == "text":
+            try:
+                return json.loads(value)
+            except Exception:
+                raise ValueError(value)
+
     if to_type == "text":
-        if from_type == "complex":
-            return complex_to_str(value)
+        if from_type == "json":
+            return json_to_str(value)
         else:
             # use the same string encoding as in json
             try:
@@ -120,7 +133,7 @@ def coerce_value(to_type: TDataType, from_type: TDataType, value: Any) -> Any:
             except binascii.Error:
                 raise ValueError(value)
         if from_type == "bigint":
-            return value.to_bytes((value.bit_length() + 7) // 8, 'little')
+            return value.to_bytes((value.bit_length() + 7) // 8, "little")
 
     if to_type == "bigint":
         if from_type in ["wei", "decimal", "double"]:
@@ -181,7 +194,7 @@ def coerce_value(to_type: TDataType, from_type: TDataType, value: Any) -> Any:
     if to_type == "bool":
         if from_type == "text":
             return str2bool(value)
-        if from_type not in ["complex", "binary", "timestamp"]:
+        if from_type not in ["json", "binary", "timestamp"]:
             # all the numeric types will convert to bool on 0 - False, 1 - True
             return bool(value)
 

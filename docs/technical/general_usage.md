@@ -47,7 +47,7 @@ Pipeline can be explicitly created and configured via `dlt.pipeline()` that retu
 4. dataset_name - name of the dataset where the data goes (see later the default names)
 5. import_schema_path - default is None
 6. export_schema_path - default is None
-7. full_refresh - if set to True the pipeline working dir will be erased and the dataset name will get the unique suffix (current timestamp). ie the `my_data` becomes `my_data_20221107164856`.
+7. dev_mode - if set to True the pipeline working dir will be erased and the dataset name will get the unique suffix (current timestamp). ie the `my_data` becomes `my_data_20221107164856`.
 
 > **Achtung** as per `secrets_and_config.md` the arguments passed to `dlt.pipeline` are configurable and if skipped will be injected by the config providers. **the values provided explicitly in the code have a full precedence over all config providers**
 
@@ -90,7 +90,7 @@ p.extract([label1, label2, label3], name="labels")  # will use default schema "s
 
 **By default, one dataset can handle multiple schemas**.
 The pipeline configuration option `use_single_dataset` controls the dataset layout in the destination. By default it is set to True. In that case only one dataset is created at the destination - by default dataset name which is the same as pipeline name. The dataset name can also be explicitly provided into `dlt.pipeline` `dlt.run` and `Pipeline::load` methods.
-All the tables from all the schemas are stored in that dataset. The table names are **not prefixed** with schema names!. If there are any name clashes, tables in the destination will be unions of the fields of all the tables with same name in the schemas.
+All the tables from all the schemas are stored in that dataset. The table names are **not prefixed** with schema names!. If there are any name collisions, tables in the destination will be unions of the fields of all the tables with same name in the schemas.
 
 **Enabling one dataset per schema layout**
 If you set `use_single_dataset` to False:
@@ -101,7 +101,7 @@ In case **there are more schemas in the pipeline**, the data will be loaded into
 1. `spotify` tables and `labels` will load into `spotify_data_1`
 2. `mel` resource will load into `spotify_data_1_echonest`
 
-The `full_refresh` option: dataset name receives a prefix with the current timestamp: ie the `my_data` becomes `my_data_20221107164856`. This allows a non destructive full refresh. Nothing is being deleted/dropped from the destination.
+The `dev_mode` option: dataset name receives a prefix with the current timestamp: ie the `my_data` becomes `my_data_20221107164856`. This allows a non destructive full refresh. Nothing is being deleted/dropped from the destination.
 
 ## pipeline working directory and state
 Another fundamental concept is the pipeline working directory. This directory keeps the following information:
@@ -117,7 +117,7 @@ The `restore_from_destination` argument to `dlt.pipeline` let's the user restore
 
 The state is being stored in the destination together with other data. So only when all pipeline stages are completed the state is available for restoration.
 
-The pipeline cannot be restored if `full_refresh` flag is set.
+The pipeline cannot be restored if `dev_mode` flag is set.
 
 The other way to trigger full refresh is to drop destination dataset. `dlt` detects that and resets the pipeline local working folder.
 
@@ -155,8 +155,8 @@ The default json normalizer will convert json documents into tables. All the key
 
 ❗ [more here](working_with_schemas.md)
 
-### Full refresh mode
-If `full_refresh` flag is passed to `dlt.pipeline` then
+### Dev mode mode
+If `dev_mode` flag is passed to `dlt.pipeline` then
 1. the pipeline working dir is fully wiped out (state, schemas, temp files)
 2. dataset name receives a prefix with the current timestamp: ie the `my_data` becomes `my_data_20221107164856`.
 3. pipeline will not be restored from the destination
@@ -181,44 +181,6 @@ The `run`, `extract`, `normalize` and `load` method raise `PipelineStepFailed` w
 
 > should we add it? I have a runner in `dlt` that would be easy to modify
 
-## the `Pipeline` object
-There are many ways to create or get current pipeline object.
-```python
-
-# create and get default pipeline
-p1 = dlt.pipeline()
-# create explicitly configured pipeline
-p2 = dlt.pipeline(pipeline_name="pipe", destination=bigquery)
-# get recently created pipeline
-assert dlt.pipeline() is p2
-# load data with recently created pipeline
-assert dlt.run(taktile_data()) is p2
-assert taktile_data().run() is p2
-
-```
-
-The `Pipeline` object provides following functionalities:
-1. `run`, `extract`, `normalize` and `load` methods
-2. a `pipeline.schema` dictionary-like object to enumerate and get the schemas in pipeline
-3. schema get with `pipeline.schemas[name]` is a live object: any modification to it is automatically applied to the pipeline with the next `run`, `load` etc. see [working_with_schemas.md](working_with_schemas.md)
-4. it returns `sql_client` and `native_client` to get direct access to the destination (if destination supports SQL - currently all of them do)
-5. it has several methods to inspect the pipeline state and I think those should be exposed via `dlt pipeline` CLI
-
-for example:
-- list the extracted files if any
-- list the load packages ready to load
-- list the failed jobs in package
-- show info on destination: what are the datasets, the current load_id, the current schema etc.
-
-
-## Examples
-[we have some here](/docs/examples/)
-
-## command line interface
-
-
-## logging
-I need your input for user friendly logging. What should we log? What is important to see?
 
 ## pipeline runtime setup
 

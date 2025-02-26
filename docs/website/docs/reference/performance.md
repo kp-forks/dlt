@@ -1,132 +1,121 @@
 ---
-title: Performance
+title: Optimizing dlt
 description: Scale-up, parallelize and finetune dlt pipelines
 keywords: [scaling, parallelism, finetuning]
 ---
 
-# Performance
+# Optimizing dlt
 
-## Yield pages instead of rows
+This page contains a collection of tips and tricks to optimize dlt pipelines for speed, scalability and memory footprint. Keep in mind that dlt works in [three discreet stages](./explainers/how-dlt-works) that all have their own performance characteristics.
 
-If you can, yield pages when producing data. This makes some processes more effective by lowering
-the necessary function calls (each chunk of data that you yield goes through the extract pipeline once so if you yield a chunk of 10.000 items you will gain significant savings)
+
+## Optimizing the extract stage
+
+
+### Yield pages instead of rows
+
+If possible, yield pages when producing data. This approach makes some processes more effective by reducing
+the number of necessary function calls (each chunk of data that you yield goes through the extract pipeline once, so if you yield a chunk of 10,000 items, you will gain significant savings).
 For example:
-<!--@@@DLT_SNIPPET_START ./performance_snippets/performance-snippets.py::performance_chunking-->
-```py
-import dlt
+<!--@@@DLT_SNIPPET ./performance_snippets/performance-snippets.py::performance_chunking-->
 
-def get_rows(limit):
-    yield from map(lambda n: {"row": n}, range(limit))
-
-@dlt.resource
-def database_cursor():
-    # here we yield each row returned from database separately
-    yield from get_rows(10000)
-```
-<!--@@@DLT_SNIPPET_END ./performance_snippets/performance-snippets.py::performance_chunking-->
 can be replaced with:
 
-<!--@@@DLT_SNIPPET_START ./performance_snippets/performance-snippets.py::performance_chunking_chunk-->
-```py
-from itertools import islice
+<!--@@@DLT_SNIPPET ./performance_snippets/performance-snippets.py::performance_chunking_chunk-->
 
-@dlt.resource
-def database_cursor_chunked():
-    # here we yield chunks of size 1000
-    rows = get_rows(10000)
-    while item_slice := list(islice(rows, 1000)):
-        print(f"got chunk of length {len(item_slice)}")
-        yield item_slice
-```
-<!--@@@DLT_SNIPPET_END ./performance_snippets/performance-snippets.py::performance_chunking_chunk-->
 
-## Memory/disk management
-`dlt` buffers data in memory to speed up processing and uses file system to pass data between the **extract** and **normalize** stages. You can control the size of the buffers and size and number of the files to fine-tune memory and cpu usage. Those settings impact parallelism as well, which is explained in the next chapter.
+### Resources extraction, `fifo` vs. `round robin`
 
-### Controlling in-memory buffers
-`dlt` maintains in-memory buffers when writing intermediary files in the **extract** and **normalize** stages. The size of the buffers are controlled by specifying the number of data items held in them. Data is appended to open files when the item buffer is full, after which the buffer is cleared. You can the specify buffer size via environment variables or in `config.toml` to be more or less granular:
-* set all buffers (both extract and normalize)
-* set extract buffers separately from normalize buffers
-* set extract buffers for particular source or resource
+When extracting from resources, you have two options to determine the order of queries to your
+resources: `round_robin` and `fifo`.
 
-<!--@@@DLT_SNIPPET_START ./performance_snippets/toml-snippets.toml::buffer_toml-->
-```toml
-# set buffer size for extract and normalize stages
-[data_writer]
-buffer_max_items=100
+`round_robin` is the default option and will result in the extraction of one item from the first resource, then one item from the second resource, etc., doing as many rounds as necessary until all resources are fully extracted. If you want to extract resources in parallel, you will need to keep `round_robin`.
 
-# set buffers only in extract stage - for all sources
-[sources.data_writer]
-buffer_max_items=100
-
-# set buffers only for a source with name zendesk_support
-[sources.zendesk_support.data_writer]
-buffer_max_items=100
-
-# set buffers in normalize stage
-[normalize.data_writer]
-buffer_max_items=100
-```
-<!--@@@DLT_SNIPPET_END ./performance_snippets/toml-snippets.toml::buffer_toml-->
-
-The default buffer is actually set to a moderately low value (**5000 items**), so unless you are trying to run `dlt`
-on IOT sensors or other tiny infrastructures, you might actually want to increase it to speed up
-processing.
-
-### Controlling intermediary files size and rotation
-`dlt` writes data to intermediary files. You can control the file size and the number of created files by setting the maximum number of data items stored in a single file or the maximum single file size. Keep in mind that the file size is computed after compression was performed.
-* `dlt` uses a custom version of [`jsonl` file format](../dlt-ecosystem/file-formats/jsonl.md) between the **extract** and **normalize** stages.
-* files created between the **normalize** and **load** stages are the same files that will be loaded to destination.
+`fifo` is an option for sequential extraction. It will result in every resource being fully extracted until the resource generator is expired, or a configured limit is reached, then the next resource will be evaluated. Resources are extracted in the order that you added them to your source.
 
 :::tip
-The default setting is to not rotate the files so if you have a resource with millions of records, `dlt` will still create a single intermediary file to normalize and a single file to load. **If you want such data to be normalized and loaded in parallel you must enable file rotation as described below**
+Switch to `fifo` when debugging sources with many resources and connected transformers, for example [rest_api](../dlt-ecosystem/verified-sources/rest_api/index.md).
+Your data will be requested in a deterministic and straightforward order - a given data item (i.e., a user record you got from an API) will be processed by all resources
+and transformers until completion before starting with a new one.
+:::
+
+You can change this setting in your `config.toml` as follows:
+
+<!--@@@DLT_SNIPPET ./performance_snippets/toml-snippets.toml::item_mode_toml-->
+
+
+### Use the built-in requests wrapper or RESTClient for API calls
+
+Instead of using Python Requests directly, you can use the built-in [requests wrapper](../general-usage/http/requests) or [`RESTClient`](../general-usage/http/rest-client) for API calls. This will make your pipeline more resilient to intermittent network errors and other random glitches.
+
+
+### Use built-in JSON parser
+`dlt` uses **orjson** if available. If not, it falls back to **simplejson**. The built-in parsers serialize several Python types:
+- Decimal
+- DateTime, Date
+- Dataclasses
+
+Import the module as follows for use in your sources, resources and transformers:
+
+```py
+from dlt.common import json
+```
+
+:::tip
+**orjson** is fast and available on most platforms. It uses binary streams, not strings, to load data natively.
+- Open files as binary, not string, to use `load` and `dump`.
+- Use `loadb` and `dumpb` methods to work with bytes without decoding strings.
+
+You can switch to **simplejson** at any moment by (1) removing the **orjson** dependency or (2) setting the following env variable:
+```sh
+DLT_USE_JSON=simplejson
+```
+:::
+
+
+## Overall Memory and disk management
+`dlt` buffers data in memory to speed up processing and uses the file system to pass data between the **extract** and **normalize** stages. You can control the size of the buffers and the size and number of the files to fine-tune memory and CPU usage. These settings also impact parallelism, which is explained in the next chapter.
+
+### Controlling in-memory buffers
+`dlt` maintains in-memory buffers when writing intermediary files in the **extract** and **normalize** stages. The size of the buffers is controlled by specifying the number of data items held in them. Data is appended to open files when the item buffer is full, after which the buffer is cleared. You can specify the buffer size via environment variables or in `config.toml` to be more or less granular:
+* set all buffers (both extract and normalize)
+* set extract buffers separately from normalize buffers
+* set extract buffers for a particular source or resource
+
+<!--@@@DLT_SNIPPET ./performance_snippets/toml-snippets.toml::buffer_toml-->
+
+
+The default buffer is actually set to a moderately low value (**5000 items**), so unless you are trying to run `dlt`
+on IoT sensors or other tiny infrastructures, you might actually want to increase it to speed up
+processing.
+
+### Controlling intermediary file size and rotation
+`dlt` writes data to intermediary files. You can control the file size and the number of created files by setting the maximum number of data items stored in a single file or the maximum single file size. Keep in mind that the file size is computed after compression has been performed.
+* `dlt` uses a custom version of the [JSON file format](../dlt-ecosystem/file-formats/jsonl.md) between the **extract** and **normalize** stages.
+* Files created between the **normalize** and **load** stages are the same files that will be loaded to the destination.
+
+:::tip
+The default setting is to not rotate the files, so if you have a resource with millions of records, `dlt` will still create a single intermediary file to normalize and a single file to load. **If you want such data to be normalized and loaded in parallel, you must enable file rotation as described below.**
 :::
 :::note
-Some file formats (ie. parquet) do not support schema changes when writing a single file and in that case they are automatically rotated when new columns are discovered.
+Some file formats (e.g., Parquet) do not support schema changes when writing a single file, and in that case, they are automatically rotated when new columns are discovered.
 :::
 
-Below we set files to rotated after 100.000 items written or when the filesize exceeds 1MiB.
+Below, we set files to rotate after 100,000 items written or when the filesize exceeds 1MiB.
 
-<!--@@@DLT_SNIPPET_START ./performance_snippets/toml-snippets.toml::file_size_toml-->
-```toml
-# extract and normalize stages
-[data_writer]
-file_max_items=100000
-max_file_size=1000000
-
-# only for the extract stage - for all sources
-[sources.data_writer]
-file_max_items=100000
-max_file_size=1000000
-
-# only for the extract stage of a source with name zendesk_support
-[sources.zendesk_support.data_writer]
-file_max_items=100000
-max_file_size=1000000
-
-# only for the normalize stage
-[normalize.data_writer]
-file_max_items=100000
-max_file_size=1000000
-```
-<!--@@@DLT_SNIPPET_END ./performance_snippets/toml-snippets.toml::file_size_toml-->
-
+<!--@@@DLT_SNIPPET ./performance_snippets/toml-snippets.toml::file_size_toml--> 
 
 ### Disabling and enabling file compression
-Several [text file formats](../dlt-ecosystem/file-formats/) have `gzip` compression enabled by default. If you wish that your load packages have uncompressed files (ie. to debug the content easily), change `data_writer.disable_compression` in config.toml. The entry below will disable the compression of the files processed in `normalize` stage.
-<!--@@@DLT_SNIPPET_START ./performance_snippets/toml-snippets.toml::compression_toml-->
-```toml
-[normalize.data_writer]
-disable_compression=true
-```
-<!--@@@DLT_SNIPPET_END ./performance_snippets/toml-snippets.toml::compression_toml-->
+Several [text file formats](../dlt-ecosystem/file-formats/) have `gzip` compression enabled by default. If you wish that your load packages have uncompressed files (e.g., to debug the content easily), change `data_writer.disable_compression` in config.toml. The entry below will disable the compression of the files processed in the `normalize` stage.
+<!--@@@DLT_SNIPPET ./performance_snippets/toml-snippets.toml::compression_toml-->
+
 
 ### Freeing disk space after loading
 
-Keep in mind load packages are buffered to disk and are left for any troubleshooting, so you can [clear disk space by setting the `delete_completed_jobs` option](../running-in-production/running.md#data-left-behind).
+Keep in mind that load packages are buffered to disk and are left for any troubleshooting, so you can [clear disk space by setting the `delete_completed_jobs` option](../running-in-production/running.md#data-left-behind).
 
-### Observing cpu and memory usage
-Please make sure that you have the `psutils` package installed (note that Airflow installs it by default). Then you can dump the stats periodically by setting the [progress](../general-usage/pipeline.md#display-the-loading-progress) to `log` in `config.toml`:
+### Observing CPU and memory usage
+Please make sure that you have the `psutil` package installed (note that Airflow installs it by default). Then, you can dump the stats periodically by setting the [progress](../general-usage/pipeline.md#display-the-loading-progress) to `log` in `config.toml`:
 ```toml
 progress="log"
 ```
@@ -135,90 +124,41 @@ or when running the pipeline:
 PROGRESS=log python pipeline_script.py
 ```
 
-## Parallelism
+## Parallelism within a pipeline
+You can create pipelines that extract, normalize, and load data in parallel.
 
 ### Extract
-You can extract data concurrently if you write your pipelines to yield callables or awaitables that can be then evaluated in a thread or futures pool respectively.
+You can extract data concurrently if you write your pipelines to yield callables or awaitables, or use async generators for your resources that can then be evaluated in a thread or futures pool respectively.
 
-Example below simulates a typical situation where a dlt resource is used to fetch a page of items and then details of individual items are fetched separately in the transformer. The `@dlt.defer` decorator wraps the `get_details` function in another callable that will be executed in the thread pool.
-<!--@@@DLT_SNIPPET_START ./performance_snippets/performance-snippets.py::parallel_extract_callables-->
-```py
-import dlt
-from time import sleep
-from threading import currentThread
+This is easily accomplished by using the `parallelized` argument in the resource decorator.
+Resources based on sync generators will execute each step (yield) of the generator in a thread pool, so each individual resource is still extracted one item at a time, but multiple such resources can run in parallel with each other.
 
-@dlt.resource
-def list_items(start, limit):
-    yield from range(start, start + limit)
+Consider an example source that consists of 2 resources fetching pages of items from different API endpoints, and each of those resources is piped to transformers to fetch complete data items respectively.
 
-@dlt.transformer
-@dlt.defer
-def get_details(item_id):
-    # simulate a slow REST API where you wait 0.3 sec for each item
-    sleep(0.3)
-    print(f"item_id {item_id} in thread {currentThread().name}")
-    # just return the results, if you yield, generator will be evaluated in main thread
-    return {"row": item_id}
+The `parallelized=True` argument wraps the resources in a generator that yields callables to evaluate each generator step. These callables are executed in the thread pool. Transformers that are not generators (as shown in the example) are internally wrapped in a generator that yields once.
+
+<!--@@@DLT_SNIPPET ./performance_snippets/performance-snippets.py::parallel_extract_callables-->
 
 
-# evaluate the pipeline and print all the items
-# resources are iterators and they are evaluated in the same way in the pipeline.run
-print(list(list_items(0, 10) | get_details))
-```
-<!--@@@DLT_SNIPPET_END ./performance_snippets/performance-snippets.py::parallel_extract_callables-->
+The `parallelized` flag in the `resource` and `transformer` decorators is supported for:
 
-You can control the number of workers in the thread pool with **workers** setting. The default number of workers is **5**. Below you see a few ways to do that with different granularity
-<!--@@@DLT_SNIPPET_START ./performance_snippets/toml-snippets.toml::extract_workers_toml-->
-```toml
-# for all sources and resources being extracted
-[extract]
-worker=1
+* Generator functions (as shown in the example)
+* Generators without functions (e.g., `dlt.resource(name='some_data', parallelized=True)(iter(range(100)))`)
+* `dlt.transformer` decorated functions. These can be either generator functions or regular functions that return one value
 
-# for all resources in the zendesk_support source
-[sources.zendesk_support.extract]
-workers=2
-
-# for the tickets resource in the zendesk_support source
-[sources.zendesk_support.tickets.extract]
-workers=4
-```
-<!--@@@DLT_SNIPPET_END ./performance_snippets/toml-snippets.toml::extract_workers_toml-->
+You can control the number of workers in the thread pool with the **workers** setting. The default number of workers is **5**. Below, you see a few ways to do that with different granularity.
+<!--@@@DLT_SNIPPET ./performance_snippets/toml-snippets.toml::extract_workers_toml-->
 
 
-The example below does the same but using an async/await and futures pool:
-<!--@@@DLT_SNIPPET_START ./performance_snippets/performance-snippets.py::parallel_extract_awaitables-->
-```py
-import asyncio
 
-@dlt.transformer
-async def a_get_details(item_id):
-    # simulate a slow REST API where you wait 0.3 sec for each item
-    await asyncio.sleep(0.3)
-    print(f"item_id {item_id} in thread {currentThread().name}")
-    # just return the results, if you yield, generator will be evaluated in main thread
-    return {"row": item_id}
+The example below does the same but using an async generator as the main resource and async/await and futures pool for the transformer.
+The `parallelized` flag is not supported or needed for async generators; these are wrapped and evaluated concurrently by default:
+<!--@@@DLT_SNIPPET ./performance_snippets/performance-snippets.py::parallel_extract_awaitables-->
 
 
-print(list(list_items(0, 10) | a_get_details))
-```
-<!--@@@DLT_SNIPPET_END ./performance_snippets/performance-snippets.py::parallel_extract_awaitables-->
+You can control the number of async functions/awaitables being evaluated in parallel by setting **max_parallel_items**. The default number is **20**. Below, you see a few ways to do that with different granularity.
+<!--@@@DLT_SNIPPET ./performance_snippets/toml-snippets.toml::extract_parallel_items_toml-->
 
-You can control the number of async functions/awaitables being evaluate in parallel by setting **max_parallel_items**. The default number is *20**. Below you see a few ways to do that with different granularity
-<!--@@@DLT_SNIPPET_START ./performance_snippets/toml-snippets.toml::extract_parallel_items_toml-->
-```toml
-# for all sources and resources being extracted
-[extract]
-max_parallel_items=10
-
-# for all resources in the zendesk_support source
-[sources.zendesk_support.extract]
-max_parallel_items=10
-
-# for the tickets resource in the zendesk_support source
-[sources.zendesk_support.tickets.extract]
-max_parallel_items=10
-```
-<!--@@@DLT_SNIPPET_END ./performance_snippets/toml-snippets.toml::extract_parallel_items_toml-->
 
 :::note
 **max_parallel_items** applies to thread pools as well. It sets how many items may be queued to be executed and currently executing in a thread pool by the workers. Imagine a situation where you have millions
@@ -226,258 +166,177 @@ of callables to be evaluated in a thread pool with a size of 5. This limit will 
 :::
 
 :::caution
-Generators and iterators are always evaluated in the main thread. If you have a loop that yields items, instead yield functions or async functions that will create the items when evaluated in the pool.
+Generators and iterators are always evaluated in a single thread: item by item. If you have a loop that yields items that you want to evaluate
+in parallel, instead yield functions or async functions that will be evaluated in separate threads or in an async pool.
 :::
 
 ### Normalize
-The **normalize** stage uses a process pool to create load package concurrently. Each file created by the **extract** stage is sent to a process pool. **If you have just a single resource with a lot of data, you should enable [extract file rotation](#controlling-intermediary-files-size-and-rotation)**. The number of processes in the pool is controlled with `workers` config value:
-<!--@@@DLT_SNIPPET_START ./performance_snippets/toml-snippets.toml::normalize_workers_toml-->
-```toml
-[extract.data_writer]
-# force extract file rotation if size exceeds 1MiB
-max_file_size=1000000
+The **normalize** stage uses a process pool to create load packages concurrently. Each file created by the **extract** stage is sent to a process pool. **If you have just a single resource with a lot of data, you should enable [extract file rotation](#controlling-intermediary-files-size-and-rotation)**. The number of processes in the pool is controlled by the `workers` config value:
+<!--@@@DLT_SNIPPET ./performance_snippets/toml-snippets.toml::normalize_workers_toml-->
 
-[normalize]
-# use 3 worker processes to process 3 files in parallel
-workers=3
-```
-<!--@@@DLT_SNIPPET_END ./performance_snippets/toml-snippets.toml::normalize_workers_toml-->
 
-```
 :::note
 The default is to not parallelize normalization and to perform it in the main process.
 :::
 
 :::note
-Normalization is CPU bound and can easily saturate all your cores. Never allow `dlt` to use all cores on your local machine.
+Normalization is CPU-bound and can easily saturate all your cores. Never allow `dlt` to use all cores on your local machine.
+:::
+
+:::caution
+The default method of spawning a process pool on Linux is **fork**. If you are using threads in your code (or libraries that use threads),
+you should switch to **spawn**. Process forking does not respawn the threads and may destroy the critical sections in your code. Even logging
+with Python loggers from multiple threads may lock the `normalize` step. Here's how you switch to **spawn**:
+```toml
+[normalize]
+workers=3
+start_method="spawn"
+```
 :::
 
 ### Load
-The **load** stage uses a thread pool for parallelization. Loading is input/output bound. `dlt` avoids any processing of the content of the load package produced by the normalizer. By default loading happens in 20 threads, each loading a single file.
+The **load** stage uses a thread pool for parallelization. Loading is input/output-bound. `dlt` avoids any processing of the content of the load package produced by the normalizer. By default, loading happens in 20 threads, each loading a single file.
 
-As before, **if you have just a single table with millions of records you should enable [file rotation in the normalizer](#controlling-intermediary-files-size-and-rotation).**. Then  the number of parallel load jobs is controlled by the `workers` config setting.
+As before, **if you have just a single table with millions of records, you should enable [file rotation in the normalizer](#controlling-intermediary-files-size-and-rotation)**. Then the number of parallel load jobs is controlled by the `workers` config setting.
 
-<!--@@@DLT_SNIPPET_START ./performance_snippets/toml-snippets.toml::normalize_workers_2_toml-->
-```toml
-[normalize.data_writer]
-# force normalize file rotation if it exceeds 1MiB
-max_file_size=1000000
+<!--@@@DLT_SNIPPET ./performance_snippets/toml-snippets.toml::normalize_workers_2_toml-->
 
-[load]
-# have 50 concurrent load jobs
-workers=50
-```
-<!--@@@DLT_SNIPPET_END ./performance_snippets/toml-snippets.toml::normalize_workers_2_toml-->
+The **normalize** stage in `dlt` uses a process pool to create load packages concurrently, and the settings for `file_max_items` and `file_max_bytes` play a crucial role in determining the size of data chunks. Lower values for these settings reduce the size of each chunk sent to the destination database, which is particularly helpful for managing memory constraints on the database server. By default, `dlt` writes all data rows into one large intermediary file, attempting to load all data at once. Configuring these settings enables file rotation, splitting the data into smaller, more manageable chunks. This not only improves performance but also minimizes memory-related issues when working with large tables containing millions of records.
+
+#### Controlling destination items size
+The intermediary files generated during the **normalize** stage are also used in the **load** stage. Therefore, adjusting `file_max_items` and `file_max_bytes` in the **normalize** stage directly impacts the size and number of data chunks sent to the destination, influencing loading behavior and performance.
 
 ### Parallel pipeline config example
-The example below simulates loading of a large database table with 1 000 000 records. The **config.toml** below sets the parallelization as follows:
-* during extraction, files are rotated each 100 000 items, so there are 10 files with data for the same table
-* the normalizer will process the data in 3 processes
-* we use JSONL to load data to duckdb. We rotate JSONL files each 100 000 items so 10 files will be created.
-* we use 11 threads to load the data (10 JSON files + state file)
+The example below simulates the loading of a large database table with 1,000,000 records. The **config.toml** below sets the parallelization as follows:
+* During extraction, files are rotated each 100,000 items, so there are 10 files with data for the same table.
+* The normalizer will process the data in 3 processes.
+* We use JSONL to load data to duckdb. We rotate JSONL files each 100,000 items so 10 files will be created.
+* We use 11 threads to load the data (10 JSON files + state file).
 
-<!--@@@DLT_SNIPPET_START ./performance_snippets/.dlt/config.toml::parallel_config_toml-->
-```toml
-# the pipeline name is default source name when loading resources
-
-[sources.parallel_load.data_writer]
-file_max_items=100000
-
-[normalize]
-workers=3
-
-[data_writer]
-file_max_items=100000
-
-[load]
-workers=11
-```
-<!--@@@DLT_SNIPPET_END ./performance_snippets/.dlt/config.toml::parallel_config_toml-->
+<!--@@@DLT_SNIPPET ./performance_snippets/.dlt/config.toml::parallel_config_toml-->
 
 
-<!--@@@DLT_SNIPPET_START ./performance_snippets/performance-snippets.py::parallel_config-->
-```py
-import os
-import dlt
-from itertools import islice
-from dlt.common import pendulum
 
-@dlt.resource(name="table")
-def read_table(limit):
-    rows = iter(range(limit))
-    while item_slice := list(islice(rows, 1000)):
-        now = pendulum.now().isoformat()
-        yield [{"row": _id, "description": "this is row with id {_id}", "timestamp": now} for _id in item_slice]
+<!--@@@DLT_SNIPPET ./performance_snippets/performance-snippets.py::parallel_config-->
 
-# this prevents process pool to run the initialization code again
-if __name__ == "__main__" or "PYTEST_CURRENT_TEST" in os.environ:
-    pipeline = dlt.pipeline("parallel_load", destination="duckdb", full_refresh=True)
-    pipeline.extract(read_table(1000000))
 
-    # we should have 11 files (10 pieces for `table` and 1 for state)
-    extracted_files = pipeline.list_extracted_resources()
-    print(extracted_files)
-    # normalize and print counts
-    print(pipeline.normalize(loader_file_format="jsonl"))
-    # print jobs in load package (10 + 1 as above)
-    load_id = pipeline.list_normalized_load_packages()[0]
-    print(pipeline.get_load_package_info(load_id))
-    print(pipeline.load())
-```
-<!--@@@DLT_SNIPPET_END ./performance_snippets/performance-snippets.py::parallel_config-->
+
 
 ### Source decomposition for serial and parallel resource execution
 
 You can decompose a pipeline into strongly connected components with
-`source().decompose(strategy="scc")`. The method returns a list of dlt sources each containing a
-single component. Method makes sure that no resource is executed twice.
+`source().decompose(strategy="scc")`. The method returns a list of dlt sources, each containing a
+single component. The method ensures that no resource is executed twice.
 
 **Serial decomposition:**
 
-You can load such sources as tasks serially in order present of the list. Such DAG is safe for
+You can load such sources as tasks serially in the order presented in the list. Such a DAG is safe for
 pipelines that use the state internally.
 [It is used internally by our Airflow mapper to construct DAGs.](https://github.com/dlt-hub/dlt/blob/devel/dlt/helpers/airflow_helper.py)
 
 **Parallel decomposition**
 
-If you are using only the resource state (which most of the pipelines really should!) you can run
+If you are using only the resource state (which most of the pipelines really should!), you can run
 your tasks in parallel.
 
 - Perform the `scc` decomposition.
-- Run each component in a pipeline with different but deterministic `pipeline_name` (same component
-  \- same pipeline, you can use names of selected resources in source to construct unique id).
+- Run each component in a pipeline with a different but deterministic `pipeline_name` (same component
+  \- same pipeline; you can use names of selected resources in the source to construct a unique id).
 
-Each pipeline will have its private state in the destination and there won't be any clashes. As all
-the components write to the same schema you may observe a that loader stage is attempting to migrate
-the schema, that should be a problem though as long as your data does not create variant columns.
+Each pipeline will have its private state in the destination, and there won't be any clashes. As all
+the components write to the same schema, you may observe that the loader stage is attempting to migrate
+the schema. That should not be a problem, though, as long as your data does not create variant columns.
 
 **Custom decomposition**
 
 - When decomposing pipelines into tasks, be mindful of shared state.
 - Dependent resources pass data to each other via generators - so they need to run on the same
-  worker. Group them in a task that runs them together - otherwise some resources will be extracted twice.
+  worker. Group them in a task that runs them together - otherwise, some resources will be extracted twice.
 - State is per-pipeline. The pipeline identifier is the pipeline name. A single pipeline state
   should be accessed serially to avoid losing details on parallel runs.
 
 
-## Resources extraction, `fifo` vs. `round robin`
+## Running multiple pipelines in parallel
 
-When extracting from resources, you have two options to determine what the order of queries to your
-resources are: `fifo` and `round_robin`.
+### Parallelism within a single process
 
-`fifo` is the default option and will result in every resource being fully extracted before the next
-resource is extracted in the order that you added them to your source.
+You can run several pipeline instances in parallel from a single process by placing them in
+separate threads. The most straightforward way is to use `ThreadPoolExecutor` and `asyncio` to execute pipeline methods.
 
-`round_robin` will result in extraction of one item from the first resource, then one item from the
-second resource etc, doing as many rounds as necessary until all resources are fully extracted.
+<!--@@@DLT_SNIPPET ./performance_snippets/performance-snippets.py::parallel_pipelines-->
 
-You can change this setting in your `config.toml` as follows:
+:::tip
+Please note the following:
 
-<!--@@@DLT_SNIPPET_START ./performance_snippets/toml-snippets.toml::item_mode_toml-->
-```toml
-[extract] # global setting
-next_item_mode="round_robin"
+1. When running in multiple threads and using [parallel normalize step](#normalize), use the **spawn**
+process start method.
+2. If you created the `Pipeline` object in the worker thread and you use it from another (i.e., the main thread),
+call `pipeline.activate()` to inject the right context into the current thread.
+:::
 
-[sources.my_pipeline.extract] # setting for the "my_pipeline" pipeline
-next_item_mode="fifo"
+
+### Parallelism across processes or machines
+
+You can also run pipelines in parallel across multiple machines. Please consult our [deployment guides](../walkthroughs/deploy-a-pipeline) for more information. Please take note of the pitfalls listed below.
+
+### Pitfalls
+
+Due to the way `dlt` works, there are a few general pitfalls to be aware of:
+
+1. Do not run pipelines with the same name and working dir in parallel on the same machine. dlt will not be able to manage state and temporary files properly if you do this.
+
+2. If you're running multiple pipelines in parallel that write to the same destination dataset and use a staging area, make sure to do one of the following:
+    - Assign a unique subfolder in the staging destination bucket for each pipeline, or
+    - [Disable automatic cleanup of the staging area](../dlt-ecosystem/staging#how-to-prevent-staging-files-truncation) after each load for all pipelines.
+
+    If you do not, files might be deleted by one pipeline that are still required to be loaded by another pipeline running in parallel.
+
+3. If you are using a write disposition that requires a staging dataset on the final destination, you should provide a unqiue staging datasetname for each pipeline, otherwise similar problems as noted above may occur. You can do this with the 
+[`staging_dataset_name_layout` setting.](../dlt-ecosystem/staging#staging-dataset)
+
+## Keep pipeline working folder in a bucket on constrained environments.
+`dlt` stores extracted data in load packages in order to load them atomically. In case you extract a lot of data at once (ie. backfill) or
+your runtime env has constrained local storage (ie. cloud functions) you can keep your data on a bucket by using [FUSE](https://github.com/libfuse/libfuse) or
+any other option which your cloud provider supplies.
+
+`dlt` users rename when saving files and  "committing" packages (folder rename). Those may be not supported on bucket filesystems. Often
+`rename` is translated into `copy` automatically. In other cases `dlt` will fallback to copy itself.
+
+In case of cloud function and gs bucket mounts, increasing the rename limit for folders is possible:
+```hcl
+volume_mounts {
+    mount_path = "/usr/src/ingestion/pipeline_storage"
+    name       = "pipeline_bucket"
+  }
+volumes {
+  name = "pipeline_bucket"
+  gcs {
+    bucket    = google_storage_bucket.dlt_pipeline_data_bucket.name
+    read_only = false
+    mount_options = [
+      "rename-dir-limit=100000"
+    ]
+  }
+}
 ```
-<!--@@@DLT_SNIPPET_END ./performance_snippets/toml-snippets.toml::item_mode_toml-->
+## Handling storage limits
 
-## Using the built in requests client
+If your storage reaches its limit, you are likely running dlt in a cloud environment with restricted disk space. To prevent issues, mount an external cloud storage location and set the `DLT_DATA_DIR` environment variable to point to it. This ensures that dlt uses the mounted storage as its data directory instead of local disk space.
 
-`dlt` provides a customized [requests](https://requests.readthedocs.io/en/latest/) client with automatic retries and configurable timeouts.
 
-We recommend using this to make API calls in your sources as it makes your pipeline more resilient to intermittent network errors and other random glitches which otherwise can cause the whole pipeline to fail.
+### Setting `DLT_DATA_DIR`
 
-The dlt requests client will additionally set the default user-agent header to `dlt/{DLT_VERSION_NAME}`.
+You can configure `DLT_DATA_DIR` in your environment setup as follows:
 
-For most use cases this is a drop in replacement for `requests`, so:
+```py
+import os
 
-:heavy_multiplication_x: **Don't**
+# Define the path to your mounted external storage
+data_dir = "/path/to/mounted/bucket/dlt_pipeline_data"
 
-```python
-import requests
+# Set the DLT_DATA_DIR environment variable
+os.environ["DLT_DATA_DIR"] = data_dir
+
+# Rest of your pipeline code
 ```
-:heavy_check_mark: **Do**
-
-```python
-from dlt.sources.helpers import requests
-```
-
-And use it just like you would use `requests`:
-
-```python
-response = requests.get('https://example.com/api/contacts', headers={'Authorization': MY_API_KEY})
-data = response.json()
-...
-```
-
-### Retry rules
-
-By default failing requests are retried up to 5 times with an exponentially increasing delay. That means the first retry will wait 1 second and the fifth retry will wait 16 seconds.
-
-If all retry attempts fail the corresponding requests exception is raised. E.g. `requests.HTTPError` or `requests.ConnectionTimeout`
-
-All standard HTTP server errors trigger a retry. This includes:
-
-* Error status codes:
-
-    All status codes in the `500` range and `429` (too many requests).
-    Commonly servers include a `Retry-After` header with `429` and `503` responses.
-    When detected this value supersedes the standard retry delay.
-
-* Connection and timeout errors
-
-    When the remote server is unreachable, the connection is unexpectedly dropped or when the request takes longer than the configured `timeout`.
-
-### Customizing retry settings
-
-Many requests settings can be added to the runtime section in your `config.toml`. For example:
-
-<!--@@@DLT_SNIPPET_START ./performance_snippets/toml-snippets.toml::retry_toml-->
-```toml
-[runtime]
-request_max_attempts = 10  # Stop after 10 retry attempts instead of 5
-request_backoff_factor = 1.5  # Multiplier applied to the exponential delays. Default is 1
-request_timeout = 120  # Timeout in seconds
-request_max_retry_delay = 30  # Cap exponential delay to 30 seconds
-```
-<!--@@@DLT_SNIPPET_END ./performance_snippets/toml-snippets.toml::retry_toml-->
-
-
-For more control you can create your own instance of `dlt.sources.requests.Client` and use that instead of the global client.
-
-This lets you customize which status codes and exceptions to retry on:
-
-```python
-from dlt.sources.helpers import requests
-
-http_client = requests.Client(
-    status_codes=(403, 500, 502, 503),
-    exceptions=(requests.ConnectionError, requests.ChunkedEncodingError)
-)
-```
-
-and you may even supply a custom retry condition in the form of a predicate.
-This is sometimes needed when loading from non-standard APIs which don't use HTTP error codes.
-
-For example:
-
-```python
-from dlt.sources.helpers import requests
-
-def retry_if_error_key(response: Optional[requests.Response], exception: Optional[BaseException]) -> bool:
-    """Decide whether to retry the request based on whether
-    the json response contains an `error` key
-    """
-    if response is None:
-        # Fall back on the default exception predicate.
-        return False
-    data = response.json()
-    return 'error' in data
-
-http_client = Client(
-    retry_condition=retry_if_error_key
-)
-```
-
+This directs dlt to use the specified external storage for all data operations, preventing local storage constraints.

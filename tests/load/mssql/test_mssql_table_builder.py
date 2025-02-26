@@ -1,29 +1,33 @@
 import pytest
-from copy import deepcopy
 import sqlfluff
 
 from dlt.common.utils import uniq_id
 from dlt.common.schema import Schema
 
-pytest.importorskip("dlt.destinations.mssql.mssql", reason="MSSQL ODBC driver not installed")
+pytest.importorskip("dlt.destinations.impl.mssql.mssql", reason="MSSQL ODBC driver not installed")
 
-from dlt.destinations.mssql.mssql import MsSqlClient
-from dlt.destinations.mssql.configuration import MsSqlClientConfiguration, MsSqlCredentials
+from dlt.destinations import mssql
+from dlt.destinations.impl.mssql.mssql import MsSqlJobClient
+from dlt.destinations.impl.mssql.configuration import MsSqlClientConfiguration, MsSqlCredentials
 
-from tests.load.utils import TABLE_UPDATE
+from tests.load.utils import TABLE_UPDATE, empty_schema
+
+# mark all tests as essential, do not remove
+pytestmark = pytest.mark.essential
+
 
 @pytest.fixture
-def schema() -> Schema:
-    return Schema("event")
-
-
-@pytest.fixture
-def client(schema: Schema) -> MsSqlClient:
+def client(empty_schema: Schema) -> MsSqlJobClient:
     # return client without opening connection
-    return MsSqlClient(schema, MsSqlClientConfiguration(dataset_name="test_" + uniq_id(), credentials=MsSqlCredentials()))
+    return mssql().client(
+        empty_schema,
+        MsSqlClientConfiguration(credentials=MsSqlCredentials())._bind_dataset_name(
+            dataset_name="test_" + uniq_id()
+        ),
+    )
 
 
-def test_create_table(client: MsSqlClient) -> None:
+def test_create_table(client: MsSqlJobClient) -> None:
     # non existing table
     sql = client._get_table_update_sql("event_test_table", TABLE_UPDATE, False)[0]
     sqlfluff.parse(sql, dialect="tsql")
@@ -47,12 +51,12 @@ def test_create_table(client: MsSqlClient) -> None:
     assert '"col11_precision" time(3)  NOT NULL' in sql
 
 
-def test_alter_table(client: MsSqlClient) -> None:
+def test_alter_table(client: MsSqlJobClient) -> None:
     # existing table has no columns
     sql = client._get_table_update_sql("event_test_table", TABLE_UPDATE, True)[0]
     sqlfluff.parse(sql, dialect="tsql")
-    canonical_name = client.sql_client.make_qualified_table_name("event_test_table")
-    assert sql.count(f"ALTER TABLE {canonical_name}\nADD") == 1
+    qualified_name = client.sql_client.make_qualified_table_name("event_test_table")
+    assert sql.count(f"ALTER TABLE {qualified_name}\nADD") == 1
     assert "event_test_table" in sql
     assert '"col1" bigint  NOT NULL' in sql
     assert '"col2" float  NOT NULL' in sql
@@ -71,3 +75,11 @@ def test_alter_table(client: MsSqlClient) -> None:
     assert '"col6_precision" decimal(6,2)  NOT NULL' in sql
     assert '"col7_precision" varbinary(19)' in sql
     assert '"col11_precision" time(3)  NOT NULL' in sql
+
+
+def test_create_dlt_table(client: MsSqlJobClient) -> None:
+    # non existing table
+    sql = client._get_table_update_sql("_dlt_version", TABLE_UPDATE, False)[0]
+    sqlfluff.parse(sql, dialect="tsql")
+    qualified_name = client.sql_client.make_qualified_table_name("_dlt_version")
+    assert f"CREATE TABLE {qualified_name}" in sql

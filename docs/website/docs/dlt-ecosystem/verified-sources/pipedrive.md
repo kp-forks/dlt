@@ -3,14 +3,11 @@ title: Pipedrive
 description: dlt verified source for Pipedrive API
 keywords: [pipedrive api, pipedrive verified source, pipedrive]
 ---
+import Header from './_source-info-header.md';
 
 # Pipedrive
 
-:::info Need help deploying these sources, or figuring out how to run them in your data stack?
-
-[Join our Slack community](https://dlthub-community.slack.com/join/shared_invite/zt-1slox199h-HAE7EQoXmstkP_bTqal65g)
-or [book a call](https://calendar.app.google/kiLhuMsWKpZUpfho6) with our support engineer Adrian.
-:::
+<Header/>
 
 [Pipedrive](https://developers.pipedrive.com/docs/api/v1) is a cloud-based sales Customer
 Relationship Management (CRM) tool designed to help businesses manage leads and deals, track
@@ -18,7 +15,7 @@ communication, and automate sales processes.
 
 This Pipedrive `dlt` verified source and
 [pipeline example](https://github.com/dlt-hub/verified-sources/blob/master/sources/pipedrive_pipeline.py)
-loads data using “Pipedrive API” to the destination of your choice.
+load data using the “Pipedrive API” to the destination of your choice.
 
 Sources and resources that can be loaded using this verified source are:
 
@@ -33,7 +30,7 @@ Sources and resources that can be loaded using this verified source are:
 | stage        | Specific step in a sales process where a deal resides based on its progress                |
 | user         | Individual with a unique login credential who can access and use the platform              |
 
-## Setup Guide
+## Setup guide
 
 ### Grab API token
 
@@ -44,8 +41,8 @@ Sources and resources that can be loaded using this verified source are:
 1. Select the API tab.
 1. Copy your API token (to be used in the dlt configuration).
 
-You can learn more about Pipedrive API token authentication in the docs
-[here](https://pipedrive.readme.io/docs/how-to-find-the-api-token).
+> Note: The Pipedrive UI, which is described here, might change.
+The full guide is available at [this link.](https://pipedrive.readme.io/docs/how-to-find-the-api-token)
 
 ### Initialize the verified source
 
@@ -53,7 +50,7 @@ To get started with your data pipeline, follow these steps:
 
 1. Enter the following command:
 
-   ```bash
+   ```sh
    dlt init pipedrive duckdb
    ```
 
@@ -68,8 +65,7 @@ To get started with your data pipeline, follow these steps:
 1. After running this command, a new directory will be created with the necessary files and
    configuration settings to get started.
 
-For more information, read the
-[Walkthrough: Add a verified source.](../../walkthroughs/add-a-verified-source)
+For more information, read the guide on [how to add a verified source.](../../walkthroughs/add-a-verified-source)
 
 ### Add credentials
 
@@ -81,33 +77,35 @@ For more information, read the
    ```toml
    [sources.pipedrive.credentials]
    # Note: Do not share this file and do not push it to GitHub!
-   pipedrive_api_key = "PIPEDRIVE_API_TOKEN" # please set me up !
+   pipedrive_api_key = "PIPEDRIVE_API_TOKEN" # please set me up!
    ```
 
 1. Replace `PIPEDRIVE_API_TOKEN` with the API token you [copied above](#grab-api-token).
 
 1. Finally, enter credentials for your chosen destination as per the [docs](../destinations/).
 
+For more information, read the [General Usage: Credentials.](../../general-usage/credentials)
+
 ## Run the pipeline
 
 1. Before running the pipeline, ensure that you have installed all the necessary dependencies by
    running the command:
-   ```bash
+   ```sh
    pip install -r requirements.txt
    ```
-1. You're now ready to run the pipeline! To get started, run the following command:
-   ```bash
-   python3 pipedrive_pipeline.py
+2. You're now ready to run the pipeline! To get started, run the following command:
+   ```sh
+   python pipedrive_pipeline.py
    ```
-1. Once the pipeline has finished running, you can verify that everything loaded correctly by using
+3. Once the pipeline has finished running, you can verify that everything loaded correctly by using
    the following command:
-   ```bash
+   ```sh
    dlt pipeline <pipeline_name> show
    ```
-   For example, the `pipeline_name` for the above pipeline example is `pipedrive`, you may also use
+   For example, the `pipeline_name` for the above pipeline example is `pipedrive`, but you may also use
    any custom name instead.
 
-For more information, read the [Walkthrough: Run a pipeline.](../../walkthroughs/run-a-pipeline)
+For more information, read the guide on [how to run a pipeline](../../walkthroughs/run-a-pipeline).
 
 ## Sources and resources
 
@@ -134,23 +132,24 @@ Pipedrive API.
 
 ### Source `pipedrive_source`
 
-This function returns a list of resources including activities, deals, custom_fields_mapping and
-other resources data from Pipedrive API.
+This function returns a list of resources including activities, deals, custom_fields_mapping, and
+other resources data from the Pipedrive API.
 
-```python
+```py
 @dlt.source(name="pipedrive")
 def pipedrive_source(
     pipedrive_api_key: str = dlt.secrets.value,
     since_timestamp: Optional[Union[pendulum.DateTime, str]] = dlt.config.value,
 ) -> Iterator[DltResource]:
+   ...
 ```
 
 `pipedrive_api_key`: Authentication token for Pipedrive, configured in ".dlt/secrets.toml".
 
-`since_timestamp`: Starting timestamp for incremental loading. By default complete history is loaded
-on first run. And new data in subsequent runs.
+`since_timestamp`: Starting timestamp for incremental loading. By default, the complete history is loaded
+ on the first run, and new data in subsequent runs.
 
-> Note: Incremental loading can be enabled or disabled depending on user prefrences.
+> Note: Incremental loading can be enabled or disabled depending on user preferences.
 
 ### Resource `iterator RECENTS_ENTITIES`
 
@@ -158,7 +157,7 @@ This code generates resources for each entity in
 [RECENTS_ENTITIES](https://github.com/dlt-hub/verified-sources/blob/master/sources/pipedrive/settings.py),
 stores them in endpoints_resources, and then loads data from each endpoint to the destination.
 
-```python
+```py
 endpoints_resources = {}
 for entity, resource_name in RECENTS_ENTITIES.items():
     endpoints_resources[resource_name] = dlt.resource(
@@ -168,7 +167,7 @@ for entity, resource_name in RECENTS_ENTITIES.items():
         write_disposition="merge",
     )(entity, **resource_kwargs)
 
-    #yields endpoint_resources.values
+    # yields endpoint_resources.values
 ```
 
 `entity and resource_name`: Key-value pairs from RECENTS_ENTITIES.
@@ -185,7 +184,7 @@ for entity, resource_name in RECENTS_ENTITIES.items():
 
 This function gets the participants of deals from the Pipedrive API and yields the result.
 
-```python
+```py
 def pipedrive_source(args):
   # Rest of function
    yield endpoints_resources["deals"] |  dlt.transformer(
@@ -199,8 +198,8 @@ def pipedrive_source(args):
 
 `write_disposition`: Sets the transformer to merge new data with existing data in the destination.
 
-Similar to the transformer function "deals_participants" is another transformer function named
-"deals_flow" that gets the flow of deals from the Pipedrive API, and then yields the result for
+Similar to the transformer function "deals_participants," another transformer function named
+"deals_flow" gets the flow of deals from the Pipedrive API and then yields the result for
 further processing or loading.
 
 ### Resource `create_state`
@@ -208,12 +207,14 @@ further processing or loading.
 This function preserves the mapping of custom fields across different pipeline runs. It is used to
 create and store a mapping of custom fields for different entities in the source state.
 
-```python
+```py
 @dlt.resource(selected=False)
 def create_state(pipedrive_api_key: str) -> Iterator[Dict[str, Any]]:
-    def _get_pages_for_rename(
-        entity: str, fields_entity: str, pipedrive_api_key: str
-    ) -> Dict[str, Any]:
+   def _get_pages_for_rename(
+      entity: str, fields_entity: str, pipedrive_api_key: str
+   ) -> Dict[str, Any]:
+      ...
+   yield _get_pages_for_rename("", "", "")
 ```
 
 It processes each entity in ENTITY_MAPPINGS, updating the custom fields mapping if a related fields
@@ -221,10 +222,10 @@ entity exists. This updated state is then saved for future pipeline runs.
 
 ### Other functions
 
-Similar to the above functions there are following:
+Similar to the above functions, there are the following:
 
 `custom_fields_mapping`: Transformer function that parses and yields custom fields' mapping in order
-to be stored in destination by dlt.
+to be stored in the destination by dlt.
 
 `leads`: Resource function that incrementally loads Pipedrive leads by update_time.
 
@@ -237,7 +238,7 @@ verified source.
 
 1. Configure the pipeline by specifying the pipeline name, destination, and dataset as follows:
 
-   ```python
+   ```py
    pipeline = dlt.pipeline(
        pipeline_name="pipedrive",  # Use a custom name if desired
        destination="duckdb",  # Choose the appropriate destination (e.g., duckdb, redshift, post)
@@ -250,7 +251,7 @@ verified source.
 
 1. To print source info:
 
-   ```python
+   ```py
    pipedrive_data = pipedrive_source()
    #print source info
    print(pipedrive_data)
@@ -262,15 +263,15 @@ verified source.
 
 1. To load all the data in Pipedrive:
 
-   ```python
+   ```py
    load_data = pipedrive_source() # calls the source function
-   load_info = pipeline.run(load_info) #runs the pipeline with selected source configuration
+   load_info = pipeline.run(load_data) #runs the pipeline with selected source configuration
    print(load_info)
    ```
 
 1. To load data from selected resources:
 
-   ```python
+   ```py
    #To load custom fields, include custom_fields_mapping for hash to name mapping.
    load_data = pipedrive_source().with_resources("products", "deals", "deals_participants", "custom_fields_mapping")
    load_info = pipeline.run(load_data) #runs the pipeline loading selected data
@@ -279,7 +280,7 @@ verified source.
 
 1. To load data from a start date:
 
-   ```python
+   ```py
    # Configure a source for 'activities' starting from the specified date.
    # The 'custom_fields_mapping' is incorporated to convert custom field hashes into their respective names.
    activities_source = pipedrive_source(
@@ -290,3 +291,4 @@ verified source.
    load_info = pipeline.run(activities_source)
    print(load_info)
    ```
+

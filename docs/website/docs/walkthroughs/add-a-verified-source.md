@@ -16,27 +16,27 @@ steps below.
 
 Create a new empty directory for your `dlt` project by running:
 
-```shell
+```sh
 mkdir various_pipelines
 cd various_pipelines
 ```
 
-List available verified sources to see their names and descriptions:
+List available sources to see their names and descriptions:
 
-```bash
-dlt init --list-verified-sources
+```sh
+dlt init --list-sources
 ```
 
-Now pick one of the source names, for example `pipedrive` and a destination i.e. `bigquery`:
+Now pick one of the source names, for example, `pipedrive` and a destination, i.e., `bigquery`:
 
-```bash
+```sh
 dlt init pipedrive bigquery
 ```
 
 The command will create your pipeline project by copying over the `pipedrive` folder and creating a
 `.dlt` folder:
 
-```
+```text
 ├── .dlt
 │   ├── config.toml
 │   └── secrets.toml
@@ -53,7 +53,7 @@ The command will create your pipeline project by copying over the `pipedrive` fo
 After running the command, read the command output for the instructions on how to install the
 dependencies:
 
-```
+```text
 Verified source pipedrive was added to your project!
 * See the usage examples and code snippets to copy from pipedrive_pipeline.py
 * Add credentials for bigquery and other secrets in .dlt/secrets.toml
@@ -76,11 +76,11 @@ the supported locations.
 ## 2. Adding credentials
 
 For adding them locally or on your orchestrator, please see the following guide
-[credentials](../general-usage/credentials.md).
+[credentials](add_credentials).
 
 ## 3. Customize or write a pipeline script
 
-Once you initialized the pipeline, you will have a sample file `pipedrive_pipeline.py`.
+Once you have initialized the pipeline, you will have a sample file `pipedrive_pipeline.py`.
 
 This is the developer's suggested way to use the pipeline, so you can use it as a starting point -
 in our case, we can choose to run a method that loads all data, or we can choose which endpoints
@@ -95,12 +95,12 @@ You can modify an existing verified source in place.
 - If that modification is generally useful for anyone using this source, consider contributing it
   back via a PR. This way, we can ensure it is tested and maintained.
 - If that modification is not a generally shared case, then you are responsible for maintaining it.
-  We suggest making any of your own customisations modular is possible, so you can keep pulling the
+  We suggest making any of your own customizations modular if possible, so you can keep pulling the
   updated source from the community repo in the event of source maintenance.
 
 ## 5. Add more sources to your project
 
-```bash
+```sh
 dlt init chess duckdb
 ```
 
@@ -116,27 +116,27 @@ pipeline:
 To update the verified source you have to the newest online version just do the same init command in
 the parent folder:
 
-```bash
+```sh
 dlt init pipedrive bigquery
 ```
 
-## 7. Advanced: Using dlt init with branches, local folders or git repos
+## 7. Advanced: Using dlt init with branches, local folders, or git repos
 
 To find out more info about this command, use --help:
 
-```bash
+```sh
 dlt init --help
 ```
 
 To deploy from a branch of the `verified-sources` repo, you can use the following:
 
-```bash
+```sh
 dlt init source destination --branch <branch_name>
 ```
 
-To deploy from another repo, you could fork the verified-sources repo and then provide the new repo
-url as below, replacing `dlt-hub` with your fork name:
+To deploy from another repo, you could fork the verified-sources repo and then provide the new repo URL as below, replacing `dlt-hub` with your fork name:
 
-```bash
+```sh
 dlt init pipedrive bigquery --location "https://github.com/dlt-hub/verified-sources"
 ```
+

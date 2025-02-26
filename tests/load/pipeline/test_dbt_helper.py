@@ -10,9 +10,9 @@ from dlt.common.utils import uniq_id
 from dlt.helpers.dbt import create_venv
 from dlt.helpers.dbt.exceptions import DBTProcessingError, PrerequisitesException
 
-from tests.load.pipeline.utils import select_data
+from tests.pipeline.utils import select_data
+from tests.load.utils import destinations_configs, DestinationTestConfiguration
 from tests.utils import ACTIVE_SQL_DESTINATIONS
-from tests.load.pipeline.utils import destinations_configs, DestinationTestConfiguration
 
 # uncomment add motherduck tests
 # NOTE: the tests are passing but we disable them due to frequent ATTACH DATABASE timeouts
@@ -23,15 +23,29 @@ from tests.load.pipeline.utils import destinations_configs, DestinationTestConfi
 def dbt_venv() -> Iterator[Venv]:
     # context manager will delete venv at the end
     # yield Venv.restore_current()
-    with create_venv(tempfile.mkdtemp(), list(ACTIVE_SQL_DESTINATIONS)) as venv:
+    # NOTE: we limit the max version of dbt to allow all dbt adapters to run. ie. sqlserver does not work on 1.8
+    # TODO: pytest marking below must be fixed
+    dbt_configs = set(
+        c.values[0].destination_type  # type: ignore[attr-defined]
+        for c in destinations_configs(default_sql_configs=True, supports_dbt=True)
+    )
+    with create_venv(tempfile.mkdtemp(), list(dbt_configs), dbt_version="<1.9") as venv:
         yield venv
 
 
-@pytest.mark.parametrize("destination_config", destinations_configs(default_sql_configs=True), ids=lambda x: x.name)
-def test_run_jaffle_package(destination_config: DestinationTestConfiguration, dbt_venv: Venv) -> None:
-    if destination_config.destination == "athena":
-        pytest.skip("dbt-athena requires database to be created and we don't do it in case of Jaffle")
-    pipeline = destination_config.setup_pipeline("jaffle_jaffle", full_refresh=True)
+@pytest.mark.parametrize(
+    "destination_config",
+    destinations_configs(default_sql_configs=True, supports_dbt=True),
+    ids=lambda x: x.name,
+)
+def test_run_jaffle_package(
+    destination_config: DestinationTestConfiguration, dbt_venv: Venv
+) -> None:
+    if destination_config.destination_type == "athena":
+        pytest.skip(
+            "dbt-athena requires database to be created and we don't do it in case of Jaffle"
+        )
+    pipeline = destination_config.setup_pipeline("jaffle_jaffle", dev_mode=True)
     # get runner, pass the env from fixture
     dbt = dlt.dbt.package(pipeline, "https://github.com/dbt-labs/jaffle_shop.git", venv=dbt_venv)
     # no default schema
@@ -49,20 +63,33 @@ def test_run_jaffle_package(destination_config: DestinationTestConfiguration, db
     assert all(r.status == "pass" for r in tests)
 
     # get and display dataframe with customers
-    customers = select_data(pipeline, "SELECT * FROM customers")
+    qual_name = pipeline.sql_client().make_qualified_table_name
+    customers = select_data(pipeline, f"SELECT * FROM {qual_name('customers')}")
     assert len(customers) == 100
-    orders = select_data(pipeline, "SELECT * FROM orders")
+    orders = select_data(pipeline, f"SELECT * FROM {qual_name('orders')}")
     assert len(orders) == 99
 
 
-@pytest.mark.parametrize("destination_config", destinations_configs(default_sql_configs=True), ids=lambda x: x.name)
+@pytest.mark.parametrize(
+    "destination_config",
+    destinations_configs(default_sql_configs=True, supports_dbt=True),
+    ids=lambda x: x.name,
+)
 def test_run_chess_dbt(destination_config: DestinationTestConfiguration, dbt_venv: Venv) -> None:
+    if destination_config.destination_type == "mssql":
+        pytest.skip(
+            "mssql requires non standard SQL syntax and we do not have specialized dbt package"
+            " for it"
+        )
+
     from docs.examples.chess.chess import chess
 
     # provide chess url via environ
     os.environ["CHESS_URL"] = "https://api.chess.com/pub/"
 
-    pipeline = destination_config.setup_pipeline("chess_games", dataset_name="chess_dbt_test", full_refresh=True)
+    pipeline = destination_config.setup_pipeline(
+        "chess_games", dataset_name="chess_dbt_test", dev_mode=True
+    )
     assert pipeline.default_schema_name is None
     # get the runner for the "dbt_transform" package
     transforms = dlt.dbt.package(pipeline, "docs/examples/chess/dbt_transform", venv=dbt_venv)
@@ -71,7 +98,7 @@ def test_run_chess_dbt(destination_config: DestinationTestConfiguration, dbt_ven
     with pytest.raises(PrerequisitesException):
         transforms.run_all(source_tests_selector="source:*")
     # load data
-    info = pipeline.run(chess(max_players=5, month=9))
+    info = pipeline.run(chess(max_players=5, month=9), **destination_config.run_kwargs)
     print(info)
     assert pipeline.schema_names == ["chess"]
     # run all the steps (deps -> seed -> source tests -> run)
@@ -79,27 +106,48 @@ def test_run_chess_dbt(destination_config: DestinationTestConfiguration, dbt_ven
     transforms.run_all(source_tests_selector="source:*")
     # run all the tests
     transforms.test()
-    load_ids = select_data(pipeline, "SELECT load_id, schema_name, status FROM _dlt_loads ORDER BY status")
+    load_ids = select_data(
+        pipeline, "SELECT load_id, schema_name, status FROM _dlt_loads ORDER BY status"
+    )
     assert len(load_ids) == 2
-    view_player_games = select_data(pipeline, "SELECT * FROM view_player_games ORDER BY username, uuid")
+    view_player_games = select_data(
+        pipeline, "SELECT * FROM view_player_games ORDER BY username, uuid"
+    )
     assert len(view_player_games) > 0
     # run again
     transforms.run()
     # no new load ids - no new data in view table
-    new_load_ids = select_data(pipeline, "SELECT load_id, schema_name, status FROM _dlt_loads ORDER BY status")
-    new_view_player_games = select_data(pipeline, "SELECT * FROM view_player_games ORDER BY username, uuid")
+    new_load_ids = select_data(
+        pipeline, "SELECT load_id, schema_name, status FROM _dlt_loads ORDER BY status"
+    )
+    new_view_player_games = select_data(
+        pipeline, "SELECT * FROM view_player_games ORDER BY username, uuid"
+    )
     assert load_ids == new_load_ids
     assert view_player_games == new_view_player_games
 
 
-@pytest.mark.parametrize("destination_config", destinations_configs(default_sql_configs=True), ids=lambda x: x.name)
-def test_run_chess_dbt_to_other_dataset(destination_config: DestinationTestConfiguration, dbt_venv: Venv) -> None:
+@pytest.mark.parametrize(
+    "destination_config",
+    destinations_configs(default_sql_configs=True, supports_dbt=True),
+    ids=lambda x: x.name,
+)
+def test_run_chess_dbt_to_other_dataset(
+    destination_config: DestinationTestConfiguration, dbt_venv: Venv
+) -> None:
+    if destination_config.destination_type == "mssql":
+        pytest.skip(
+            "mssql requires non standard SQL syntax and we do not have specialized dbt package"
+            " for it"
+        )
     from docs.examples.chess.chess import chess
 
     # provide chess url via environ
     os.environ["CHESS_URL"] = "https://api.chess.com/pub/"
 
-    pipeline = destination_config.setup_pipeline("chess_games", dataset_name="chess_dbt_test", full_refresh=True)
+    pipeline = destination_config.setup_pipeline(
+        "chess_games", dataset_name="chess_dbt_test", dev_mode=True
+    )
     # load each schema in separate dataset
     pipeline.config.use_single_dataset = False
     # assert pipeline.default_schema_name is None
@@ -107,7 +155,7 @@ def test_run_chess_dbt_to_other_dataset(destination_config: DestinationTestConfi
     transforms = dlt.dbt.package(pipeline, "docs/examples/chess/dbt_transform", venv=dbt_venv)
     # assert pipeline.default_schema_name is None
     # load data
-    info = pipeline.run(chess(max_players=5, month=9))
+    info = pipeline.run(chess(max_players=5, month=9), **destination_config.run_kwargs)
     print(info)
     assert pipeline.schema_names == ["chess"]
     # store transformations in alternative dataset
@@ -122,12 +170,18 @@ def test_run_chess_dbt_to_other_dataset(destination_config: DestinationTestConfi
     # run tests on destination dataset where transformations actually are
     transforms.test(destination_dataset_name=info.dataset_name + "_" + test_suffix)
     # get load ids from the source dataset
-    load_ids = select_data(pipeline, "SELECT load_id, schema_name, status FROM _dlt_loads ORDER BY status")
+    load_ids = select_data(
+        pipeline, "SELECT load_id, schema_name, status FROM _dlt_loads ORDER BY status"
+    )
     assert len(load_ids) == 1
     # status is 0, no more entries
     assert load_ids[0][2] == 0
     # get from destination dataset
-    load_ids = select_data(pipeline, "SELECT load_id, schema_name, status FROM _dlt_loads ORDER BY status", schema_name=test_suffix)
+    load_ids = select_data(
+        pipeline,
+        "SELECT load_id, schema_name, status FROM _dlt_loads ORDER BY status",
+        schema_name=test_suffix,
+    )
     # TODO: the package is not finished, both results should be here
     assert len(load_ids) == 1
     # status is 1, no more entries

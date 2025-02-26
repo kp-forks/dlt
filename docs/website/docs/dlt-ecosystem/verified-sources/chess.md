@@ -3,14 +3,11 @@ title: Chess.com
 description: dlt verified source for Chess.com API
 keywords: [chess.com api, chess.com verified source, verified source, chess.com, chess]
 ---
+import Header from './_source-info-header.md';
 
 # Chess.com
 
-:::info Need help deploying these sources, or figuring out how to run them in your data stack?
-
-[Join our Slack community](https://dlthub-community.slack.com/join/shared_invite/zt-1slox199h-HAE7EQoXmstkP_bTqal65g)
-or [book a call](https://calendar.app.google/kiLhuMsWKpZUpfho6) with our support engineer Adrian.
-:::
+<Header/>
 
 [Chess.com](https://www.chess.com/) is an online platform that offers services for chess
 enthusiasts. It includes online chess games, tournaments, lessons, and more.
@@ -19,11 +16,11 @@ Resources that can be loaded using this verified source are:
 
 | Name             | Description                                                            |
 | ---------------- | ---------------------------------------------------------------------- |
-| players_profiles | retrives player profiles for a list of player usernames                |
-| players_archives | retrives url to game archives for specified players                    |
-| players_games    | retrives players games that happened between start_month and end_month |
+| players_profiles | retrieves player profiles for a list of player usernames                |
+| players_archives | retrieves URL to game archives for specified players                    |
+| players_games    | retrieves players' games that happened between start_month and end_month |
 
-## Setup Guide
+## Setup guide
 
 ### Grab credentials
 
@@ -36,7 +33,7 @@ To get started with your data pipeline, follow these steps:
 
 1. Enter the following command:
 
-   ```bash
+   ```sh
    dlt init chess duckdb
    ```
 
@@ -51,8 +48,7 @@ To get started with your data pipeline, follow these steps:
 1. After running this command, a new directory will be created with the necessary files and
    configuration settings to get started.
 
-For more information, read the
-[Walkthrough: Add a verified source.](../../walkthroughs/add-a-verified-source.md)
+For more information, read the guide on [how to add a verified source](../../walkthroughs/add-a-verified-source.md).
 
 ### Add credentials
 
@@ -67,27 +63,27 @@ For more information, read the [General Usage: Credentials.](../../general-usage
 1. Before running the pipeline, ensure that you have installed all the necessary dependencies by
    running the command:
 
-   ```bash
+   ```sh
    pip install -r requirements.txt
    ```
 
 1. You're now ready to run the pipeline! To get started, run the following command:
 
-   ```bash
-   python3 chess_pipeline.py
+   ```sh
+   python chess_pipeline.py
    ```
 
 1. Once the pipeline has finished running, you can verify that everything loaded correctly by using
    the following command:
 
-   ```bash
+   ```sh
    dlt pipeline <pipeline_name> show
    ```
 
    For example, the `pipeline_name` for the above pipeline example is `chess_pipeline`, you may also
    use any custom name instead.
 
-For more information, read the [Walkthrough: Run a pipeline.](../../walkthroughs/run-a-pipeline)
+For more information, read the guide on [how to run a pipeline](../../walkthroughs/run-a-pipeline).
 
 ## Sources and resources
 
@@ -97,9 +93,9 @@ For more information, read the [Walkthrough: Run a pipeline.](../../walkthroughs
 ### Source `source`
 
 This is a `dlt.source` function for the Chess.com API named "chess", which returns a sequence of
-DltResource objects. That we'll discuss in subsequent sections as resources.
+DltResource objects. We'll discuss these in subsequent sections as resources.
 
-```python
+```py
 dlt.source(name="chess")
 def source(
     players: List[str], start_month: str = None, end_month: str = None
@@ -121,33 +117,35 @@ to fetch game data (in "YYYY/MM" format).
 
 This is a `dlt.resource` function, which returns player profiles for a list of player usernames.
 
-```python
+```py
 @dlt.resource(write_disposition="replace")
 def players_profiles(players: List[str]) -> Iterator[TDataItem]:
 
     @dlt.defer
     def _get_profile(username: str) -> TDataItem:
-        return get_path_with_retry(f"player/{username}")
-    ...
+        return _get_path_with_retry(f"player/{username}")
+    
+    for username in players:
+        yield _get_profile(username)
 ```
 
-`players`: Is a list of player usernames for which you want to fetch profile data.
+`players`: This is a list of player usernames for which you want to fetch profile data.
 
-It uses `@dlt.defer` decorator to enable parallel run in thread pool.
+It uses the `@dlt.defer` decorator to enable parallel run in a thread pool.
 
 ### Resource `players_archives`
 
-This is a `dlt.resource` function, which returns url to game archives for specified players.
+This is a `dlt.resource` function, which returns a URL to game archives for specified players.
 
-```python
+```py
 @dlt.resource(write_disposition="replace", selected=False)
 def players_archives(players: List[str]) -> Iterator[List[TDataItem]]:
     ...
 ```
 
-`players`: Is a list of player usernames for which you want to fetch archives.
+`players`: This is a list of player usernames for which you want to fetch archives.
 
-`selected=False`: Parameter means that this resource is not selected by default when the pipeline
+`selected=False`: This parameter means that this resource is not selected by default when the pipeline
 runs.
 
 ### Resource `players_games`
@@ -155,39 +153,40 @@ runs.
 This incremental resource takes data from players and returns games for the last month if not
 specified otherwise.
 
-```python
+```py
 @dlt.resource(write_disposition="append")
 def players_games(
     players: List[str], start_month: str = None, end_month: str = None
-) -> Iterator[Callable[[], List[TDataItem]]]:
-    # gets a list of already checked(loaded) archives.
+) -> Iterator[TDataItems]:
+    # gets a list of already checked (loaded) archives.
     checked_archives = dlt.current.resource_state().setdefault("archives", [])
-    ...
+    yield {}  # return your retrieved data here
 ```
 
-`players`: Is a list of player usernames for which you want to fetch games.
+`players`: This is a list of player usernames for which you want to fetch games.
 
-List `checked_archives` is used to load new archives and skip the ones already loaded. It uses state
+The list `checked_archives` is used to load new archives and skip the ones already loaded. It uses state
 to initialize a list called "checked_archives" from the current resource
 [state](../../general-usage/state).
 
 ### Resource `players_online_status`
 
-The `players_online_status` is a `dlt.resource` function checks current online status of multiple chess players. It
+The `players_online_status` is a `dlt.resource` function that checks the current online status of multiple chess players. It
 retrieves their username, status, last login date, and check time.
 
 ## Customization
 
+
+
 ### Create your own pipeline
 
-If you wish to create your own pipelines, you can leverage source and resource methods from this
-verified source.
+If you wish to create your own pipelines, you can leverage source and resource methods from this verified source.
 
 To create your data loading pipeline for players and load data, follow these steps:
 
 1. Configure the pipeline by specifying the pipeline name, destination, and dataset as follows:
 
-   ```python
+   ```py
    pipeline = dlt.pipeline(
        pipeline_name="chess_pipeline", # Use a custom name if desired
        destination="duckdb", # Choose the appropriate destination (e.g., duckdb, redshift, post)
@@ -195,14 +194,13 @@ To create your data loading pipeline for players and load data, follow these ste
    )
    ```
 
-   To read more about pipeline configuration, please refer to our
-   [documentation](../../general-usage/pipeline).
+   To read more about pipeline configuration, please refer to our [documentation](../../general-usage/pipeline).
 
-1. To load the data from all the resources for specific players (e.g. for November), you can utilise the `source` method as follows:
+1. To load the data from all the resources for specific players (e.g., for November), you can utilize the `source` method as follows:
 
-   ```python
+   ```py
    # Loads games for Nov 2022
-   data = source(
+   source_instance = chess_source(
        ["magnuscarlsen", "vincentkeymer", "dommarajugukesh", "rpragchess"],
        start_month="2022/11",
        end_month="2022/11",
@@ -211,17 +209,19 @@ To create your data loading pipeline for players and load data, follow these ste
 
 1. Use the method `pipeline.run()` to execute the pipeline.
 
-   ```python
-   info = pipeline.run(data)
+   ```py
+   info = pipeline.run(source_instance)
    # print the information on data that was loaded
    print(info)
    ```
 
-1. To load data from specific resources like "players_games" and "player_profiles", modify the above
-   code as:
+1. To load data from specific resources like "players_games" and "player_profiles", modify the above code as:
 
-   ```python
-   info = pipeline.run(data.with_resources("players_games", "players_profiles"))
+   ```py
+   info = pipeline.run(source_instance.with_resources("players_games", "players_profiles"))
    # print the information on data that was loaded
    print(info)
    ```
+
+<!--@@@DLT_TUBA chess-->
+

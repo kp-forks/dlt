@@ -1,23 +1,29 @@
+import sys
 import os
 from subprocess import CalledProcessError
 import giturlparse
-from typing import Sequence
+from typing import Optional, Sequence
 
 import dlt
 from dlt.common import logger
 from dlt.common.configuration import with_config, known_sections
 from dlt.common.configuration.utils import add_config_to_env
-from dlt.common.destination.reference import DestinationClientDwhConfiguration
+from dlt.common.destination.client import DestinationClientDwhConfiguration
 from dlt.common.runners import Venv
 from dlt.common.runners.stdout import iter_stdout_with_result
-from dlt.common.typing import StrAny, TSecretValue
-from dlt.common.runtime.logger import is_json_logging
+from dlt.common.typing import StrAny, TSecretStrValue
+from dlt.common.logger import is_json_logging
 from dlt.common.storages import FileStorage
 from dlt.common.git import git_custom_key_command, ensure_remote_head, force_clone_repo
 from dlt.common.utils import with_custom_environ
 
 from dlt.helpers.dbt.configuration import DBTRunnerConfiguration
-from dlt.helpers.dbt.exceptions import IncrementalSchemaOutOfSyncError, PrerequisitesException, DBTNodeResult, DBTProcessingError
+from dlt.helpers.dbt.exceptions import (
+    IncrementalSchemaOutOfSyncError,
+    PrerequisitesException,
+    DBTNodeResult,
+    DBTProcessingError,
+)
 
 from dlt.common.runtime.telemetry import with_telemetry
 
@@ -31,12 +37,13 @@ class DBTPackageRunner:
     passed via DBTRunnerConfiguration instance
     """
 
-    def __init__(self,
+    def __init__(
+        self,
         venv: Venv,
         credentials: DestinationClientDwhConfiguration,
         working_dir: str,
         source_dataset_name: str,
-        config: DBTRunnerConfiguration
+        config: DBTRunnerConfiguration,
     ) -> None:
         self.venv = venv
         self.credentials = credentials
@@ -62,7 +69,9 @@ class DBTPackageRunner:
             self.cloned_package_name = url.name
             self.package_path = os.path.join(self.working_dir, self.cloned_package_name)
 
-    def _get_package_vars(self, additional_vars: StrAny = None, destination_dataset_name: str = None) -> StrAny:
+    def _get_package_vars(
+        self, additional_vars: StrAny = None, destination_dataset_name: str = None
+    ) -> StrAny:
         if self.config.package_additional_vars:
             package_vars = dict(self.config.package_additional_vars)
         else:
@@ -82,7 +91,9 @@ class DBTPackageRunner:
             if res.status == "error":
                 logger.error(f"Model {res.model_name} error! Error: {res.message}")
             else:
-                logger.info(f"Model {res.model_name} {res.status} in {res.time} seconds with {res.message}")
+                logger.info(
+                    f"Model {res.model_name} {res.status} in {res.time} seconds with {res.message}"
+                )
 
     def ensure_newest_package(self) -> None:
         """Clones or brings the dbt package at `package_location` up to date."""
@@ -90,19 +101,37 @@ class DBTPackageRunner:
 
         with git_custom_key_command(self.config.package_repository_ssh_key) as ssh_command:
             try:
-                ensure_remote_head(self.package_path, branch=self.config.package_repository_branch, with_git_command=ssh_command)
+                ensure_remote_head(
+                    self.package_path,
+                    branch=self.config.package_repository_branch,
+                    with_git_command=ssh_command,
+                )
             except GitError as err:
                 # cleanup package folder
                 logger.info(f"Package will be cloned due to {type(err).__name__}:{str(err)}")
-                logger.info(f"Will clone {self.config.package_location} head {self.config.package_repository_branch} into {self.package_path}")
-                force_clone_repo(self.config.package_location, self.repo_storage, self.cloned_package_name, self.config.package_repository_branch, with_git_command=ssh_command)
+                logger.info(
+                    f"Will clone {self.config.package_location} head"
+                    f" {self.config.package_repository_branch} into {self.package_path}"
+                )
+                force_clone_repo(
+                    self.config.package_location,
+                    self.repo_storage,
+                    self.cloned_package_name,
+                    self.config.package_repository_branch,
+                    with_git_command=ssh_command,
+                )
 
     @with_custom_environ
-    def _run_dbt_command(self, command: str, command_args: Sequence[str] = None, package_vars: StrAny = None) -> Sequence[DBTNodeResult]:
-        logger.info(f"Exec dbt command: {command} {command_args} {package_vars} on profile {self.config.package_profile_name}")
+    def _run_dbt_command(
+        self, command: str, command_args: Sequence[str] = None, package_vars: StrAny = None
+    ) -> Sequence[DBTNodeResult]:
+        logger.info(
+            f"Exec dbt command: {command} {command_args} {package_vars} on profile"
+            f" {self.config.package_profile_name}"
+        )
         # write credentials to environ to pass them to dbt, add DLT__ prefix
         if self.credentials:
-            add_config_to_env(self.credentials, ("dlt", ))
+            add_config_to_env(self.credentials, ("dlt",))
         args = [
             self.config.runtime.log_level,
             is_json_logging(self.config.runtime.log_format),
@@ -111,7 +140,7 @@ class DBTPackageRunner:
             self.config.package_profiles_dir,
             self.config.package_profile_name,
             command_args,
-            package_vars
+            package_vars,
         ]
         script = f"""
 from functools import partial
@@ -126,15 +155,22 @@ with exec_to_stdout(f):
         try:
             i = iter_stdout_with_result(self.venv, "python", "-c", script)
             while True:
-                print(next(i).strip())
+                sys.stdout.write(next(i).strip())
+                sys.stdout.write("\n")
         except StopIteration as si:
             # return result from generator
             return si.value  # type: ignore
         except CalledProcessError as cpe:
-            print(cpe.stderr)
+            sys.stderr.write(cpe.stderr)
+            sys.stdout.write("\n")
             raise
 
-    def run(self, cmd_params: Sequence[str] = ("--fail-fast", ), additional_vars: StrAny = None, destination_dataset_name: str = None) -> Sequence[DBTNodeResult]:
+    def run(
+        self,
+        cmd_params: Sequence[str] = ("--fail-fast",),
+        additional_vars: StrAny = None,
+        destination_dataset_name: str = None,
+    ) -> Sequence[DBTNodeResult]:
         """Runs `dbt` package
 
         Executes `dbt run` on previously cloned package.
@@ -151,12 +187,15 @@ with exec_to_stdout(f):
             DBTProcessingError: `run` command failed. Contains a list of models with their execution statuses and error messages
         """
         return self._run_dbt_command(
-            "run",
-            cmd_params,
-            self._get_package_vars(additional_vars, destination_dataset_name)
+            "run", cmd_params, self._get_package_vars(additional_vars, destination_dataset_name)
         )
 
-    def test(self, cmd_params: Sequence[str] = None, additional_vars: StrAny = None, destination_dataset_name: str = None) -> Sequence[DBTNodeResult]:
+    def test(
+        self,
+        cmd_params: Sequence[str] = None,
+        additional_vars: StrAny = None,
+        destination_dataset_name: str = None,
+    ) -> Sequence[DBTNodeResult]:
         """Tests `dbt` package
 
         Executes `dbt test` on previously cloned package.
@@ -173,12 +212,12 @@ with exec_to_stdout(f):
             DBTProcessingError: `test` command failed. Contains a list of models with their execution statuses and error messages
         """
         return self._run_dbt_command(
-            "test",
-            cmd_params,
-            self._get_package_vars(additional_vars, destination_dataset_name)
+            "test", cmd_params, self._get_package_vars(additional_vars, destination_dataset_name)
         )
 
-    def _run_db_steps(self, run_params: Sequence[str], package_vars: StrAny, source_tests_selector: str) -> Sequence[DBTNodeResult]:
+    def _run_db_steps(
+        self, run_params: Sequence[str], package_vars: StrAny, source_tests_selector: str
+    ) -> Sequence[DBTNodeResult]:
         if self.repo_storage:
             # make sure we use package from the remote head
             self.ensure_newest_package()
@@ -209,8 +248,9 @@ with exec_to_stdout(f):
             else:
                 raise
 
-    def run_all(self,
-        run_params: Sequence[str] = ("--fail-fast", ),
+    def run_all(
+        self,
+        run_params: Sequence[str] = ("--fail-fast",),
         additional_vars: StrAny = None,
         source_tests_selector: str = None,
         destination_dataset_name: str = None,
@@ -244,7 +284,7 @@ with exec_to_stdout(f):
             results = self._run_db_steps(
                 run_params,
                 self._get_package_vars(additional_vars, destination_dataset_name),
-                source_tests_selector
+                source_tests_selector,
             )
             self._log_dbt_run_results(results)
             return results
@@ -265,11 +305,37 @@ def create_runner(
     credentials: DestinationClientDwhConfiguration,
     working_dir: str,
     package_location: str = dlt.config.value,
-    package_repository_branch: str = None,
-    package_repository_ssh_key: TSecretValue = TSecretValue(""),  # noqa
-    package_profiles_dir: str = None,
-    package_profile_name: str = None,
-    auto_full_refresh_when_out_of_sync: bool = None,
-    config: DBTRunnerConfiguration = None
-    ) -> DBTPackageRunner:
-    return DBTPackageRunner(venv, credentials, working_dir, credentials.dataset_name, config)
+    package_repository_branch: Optional[str] = None,
+    package_repository_ssh_key: Optional[TSecretStrValue] = "",
+    package_profiles_dir: Optional[str] = None,
+    package_profile_name: Optional[str] = None,
+    auto_full_refresh_when_out_of_sync: bool = True,
+    config: DBTRunnerConfiguration = None,
+) -> DBTPackageRunner:
+    """Creates a Python wrapper over `dbt` package present at specified location, that allows to control it (ie. run and test) from Python code.
+
+    The created wrapper minimizes the required effort to run `dbt` packages. It clones the package repo and keeps it up to data,
+    optionally shares the `dlt` destination credentials with `dbt` and allows the isolated execution with `venv` parameter.
+
+    Note that you can pass config and secrets in DBTRunnerConfiguration as configuration in section "dbt_package_runner"
+
+    Args:
+        venv (Venv): A virtual environment with required dbt dependencies. Pass None to use current environment.
+        credentials (DestinationClientDwhConfiguration): Any configuration deriving from DestinationClientDwhConfiguration ie. ConnectionStringCredentials
+        working_dir (str): A working dir to which the package will be cloned
+        package_location (str): A git repository url to be cloned or a local path where dbt package is present
+        package_repository_branch (str, optional): A branch name, tag name or commit-id to check out. Defaults to None.
+        package_repository_ssh_key (TSecretValue, optional): SSH key to be used to clone private repositories. Defaults to TSecretValue("").
+        package_profiles_dir (str, optional): Path to the folder where "profiles.yml" resides
+        package_profile_name (str, optional): Name of the profile in "profiles.yml"
+        auto_full_refresh_when_out_of_sync (bool, optional): If set to True (default), the wrapper will automatically fall back to full-refresh mode when schema is out of sync
+                                                             See: https://docs.getdbt.com/docs/build/incremental-models#what-if-the-columns-of-my-incremental-model-change_description_. Defaults to None.
+        config (DBTRunnerConfiguration, optional): Explicit additional configuration for the runner.
+
+    Returns:
+        DBTPackageRunner: A Python `dbt` wrapper
+    """
+    dataset_name = credentials.dataset_name if credentials else ""
+    if venv is None:
+        venv = Venv.restore_current()
+    return DBTPackageRunner(venv, credentials, working_dir, dataset_name, config)

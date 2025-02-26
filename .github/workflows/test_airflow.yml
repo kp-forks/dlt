@@ -1,4 +1,4 @@
-name: test airflow integration
+name: tools | airflow
 
 on:
   pull_request:
@@ -7,12 +7,17 @@ on:
       - devel
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   get_docs_changes:
+    name: docs changes
     uses: ./.github/workflows/get_docs_changes.yml
 
   run_airflow:
-    name: Tests Airflow integration
+    name: tools | airflow tests
     needs: get_docs_changes
     if: needs.get_docs_changes.outputs.changes_outside_docs == 'true'
     runs-on: ubuntu-latest
@@ -32,6 +37,7 @@ jobs:
           virtualenvs-create: true
           virtualenvs-in-project: true
           installer-parallel: true
+          version: 1.8.5
 
       - name: Load cached venv
         id: cached-poetry-dependencies
@@ -41,7 +47,7 @@ jobs:
           key: venv-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('**/poetry.lock') }}-airflow-runner
 
       - name: Install dependencies
-        run: poetry install --no-interaction --with airflow -E duckdb -E parquet
+        run: poetry install --no-interaction --with airflow --with pipeline -E duckdb -E parquet --with sentry-sdk
 
       - run: |
           poetry run pytest tests/helpers/airflow_tests
